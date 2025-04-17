@@ -29,6 +29,7 @@ jobs:
         python -m pip install --upgrade pip
         python -m pip install flake8 pytest black mypy
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+        if [ -f test/requirements.txt ]; then pip install -r test/requirements.txt; fi
     - name: Lint with flake8
       run: |
         # stop the build if there are Python syntax errors or undefined names
@@ -37,10 +38,10 @@ jobs:
         flake8 . --count --exit-zero --statistics
     - name: Check formatting
       run: |
-        black grgnn/ setup.py test/ examples/ --check 
+        black grgapp/ setup.py test/ examples/ --check 
     - name: Check typing
       run: |
-        mypy grgnn --no-namespace-packages --ignore-missing-imports
+        mypy grgapp --no-namespace-packages --ignore-missing-imports
     - name: Test with pytest
       run: |
         PYTHONPATH=$PWD pytest

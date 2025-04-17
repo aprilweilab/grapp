@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 import os
 
-PACKAGE_NAME = "grgnn"
+PACKAGE_NAME = "grgapp"
 VERSION = "0.1"
 
 THISDIR = os.path.dirname(os.path.realpath(__file__))
@@ -14,7 +14,7 @@ setup(
     name=PACKAGE_NAME,
     packages=find_packages(),
     version=VERSION,
-    description="Nearest neighbor search for GRG",
+    description="Statistical and population genetics methods on GRG",
     author="Drew DeHaas",
     author_email="",
     url="https://aprilweilab.github.io/",
