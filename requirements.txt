@@ -1,0 +1,2 @@
+pygrgl>=2.0
+numpy
