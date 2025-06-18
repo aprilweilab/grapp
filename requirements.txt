@@ -1,2 +1,3 @@
 pygrgl>=2.1
 numpy
+scipy
