@@ -1,14 +1,11 @@
 from pygrgl import get_topo_order, TraversalDirection
-import pygrgl
+from scipy.stats import t as t_distribution
+from typing import Iterable
 import numpy as np
 import pandas as pd
-import time
-import math
+import pygrgl
 import re
-import cProfile, pstats, io
-
-from pstats import SortKey
-from scipy.stats import t as t_distribution
+import time
 
 
 def read_covariates_matrix(
@@ -85,13 +82,16 @@ def read_pheno(filename: str):
 
 def compute_XtX(g: pygrgl.GRG) -> tuple[np.typing.NDArray, np.typing.NDArray]:
     """
-    Computes X^T X and allele frequencies from the GRG via graph traversal
+    Computes X^T X and allele frequencies from the GRG via graph traversal, for graphs that
+    have a ploidy of 1 or 2.
 
     :return: A tuple containing:
         - mut_XX (numpy.ndarray): Vector of mutation-specific X^T X values.
         - freq (numpy.ndarray): Vector of mutation-specific allele counts.
     :rtype: Tuple[numpy.ndarray, numpy.ndarray]
     """
+    assert g.ploidy <= 2, f"Ploidy {g.ploidy} not supported for XtX computation"
+
     # do by node
     num_nodes = g.num_nodes
     freq_map = np.zeros(num_nodes)
@@ -99,16 +99,26 @@ def compute_XtX(g: pygrgl.GRG) -> tuple[np.typing.NDArray, np.typing.NDArray]:
     node_mean = np.zeros(num_nodes)
     num_samples = g.num_samples
 
-    topo_nodes = list(get_topo_order(g, TraversalDirection.UP, g.get_sample_nodes()))
+    # In most GRGs, the nodes are ordered topologically. This may not be the case for
+    # a MutableGRG, but those will rarely be used for computation.
+    topo_nodes: Iterable[int] = range(g.num_nodes)
+    if not g.nodes_are_ordered:
+        topo_nodes = list(
+            get_topo_order(g, TraversalDirection.UP, g.get_sample_nodes())
+        )
 
     for node_id in topo_nodes:
-        curr_coals = g.get_num_individual_coals(node_id)
-        assert (
-            curr_coals != pygrgl.COAL_COUNT_NOT_SET
-        ), "XtX only computable on diploid datasets that contain coalescence counts"
-        assert (
-            curr_coals <= num_samples / 2
-        ), "Coalescence counts less than the number of diploid samples"
+        if g.ploidy == 2:
+            curr_coals = g.get_num_individual_coals(node_id)
+            assert (
+                curr_coals != pygrgl.COAL_COUNT_NOT_SET
+            ), "XtX only computable on diploid datasets that contain coalescence counts"
+            assert (
+                curr_coals <= num_samples / 2
+            ), "Coalescence counts less than the number of diploid samples"
+            coal_modifier = 2 * curr_coals
+        else:
+            coal_modifier = 1
 
         # check if sample node
         if g.is_sample(node_id):
@@ -125,7 +135,7 @@ def compute_XtX(g: pygrgl.GRG) -> tuple[np.typing.NDArray, np.typing.NDArray]:
                 mean_count += node_mean[child_id]
                 frequency += freq_map[child_id]
 
-            node_XX_count[node_id] = count + 2 * curr_coals
+            node_XX_count[node_id] = count + coal_modifier
             node_mean[node_id] = mean_count
             freq_map[node_id] = frequency
 
@@ -135,7 +145,6 @@ def compute_XtX(g: pygrgl.GRG) -> tuple[np.typing.NDArray, np.typing.NDArray]:
     # extend to mutations
     mut_pairs = g.get_mutation_node_pairs()
     for pair in mut_pairs:
-        freq = 0
         node_id = pair[1]
         mut = pair[0]
         if node_id > num_nodes:
@@ -319,27 +328,3 @@ def linear_assoc_covar(
     }
     df_data.update(gamma_cols)
     return pd.DataFrame(df_data)
-
-
-# testing_covar = True
-# if testing_covar:
-#     y = read_pheno("/home/chris/GRGWAS-Cov/PLINK_Assitance/p100000.txt")
-#     g = pygrgl.load_immutable_grg("/home/chris/GRGWAS-Cov/Test_GRG's/simulation-source-100000-100000000.igd.final.grg")
-#     C = read_covariates_matrix("/home/chris/GRGWAS-Cov/PLINK_Assitance/c100000-5.txt", True)
-
-#     pr = cProfile.Profile()
-#     pr.enable()
-#     df = linear_assoc_covar(g,y,C)
-#     pr.disable()
-#     s = io.StringIO()
-#     sortby = SortKey.CUMULATIVE
-#     ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
-#     ps.print_stats()
-#     print(s.getvalue())
-#     print(df.head(100))
-
-# else:
-#     y = read_pheno("/home/chris/GRGWAS-Cov/original_files/phenotypes.txt")
-#     g = pygrgl.load_immutable_grg("/home/chris/GRGWAS-Cov/test-200-samples.vcf.gz.final.grg")
-#     df = linear_assoc_no_covar(g,y)
-#     print(df.head(100))
