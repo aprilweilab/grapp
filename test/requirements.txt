@@ -1,2 +1,4 @@
 pyigd
 pytest
+pandas
+scipy
