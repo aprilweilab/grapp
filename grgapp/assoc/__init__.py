@@ -174,157 +174,162 @@ def linear_assoc_no_covar(
     """
     assert grg.ploidy == 2, "GWAS is only supported on diploid individuals"
 
-    mut_XX_count, freq_count = compute_XtX(grg)
-    n = grg.num_individuals
+    with np.errstate(divide="ignore"):
+        mut_XX_count, freq_count = compute_XtX(grg)
+        # Treat them as floats so that we get inf for divide by zero below.
+        mut_XX_count = mut_XX_count.astype(np.float64)
+        freq_count = freq_count.astype(np.float64)
 
-    y = np.repeat(Y, grg.ploidy)
-    total_pheno = Y.sum()
-    yy = np.dot(Y, Y)
+        n = grg.num_individuals
 
-    freq_count_norm = freq_count / n
-    mut_XY_count = pygrgl.dot_product(grg, y, TraversalDirection.UP)
+        y = np.repeat(Y, grg.ploidy)
+        total_pheno = Y.sum()
+        yy = np.dot(Y, Y)
 
-    # Vectorized regression components
-    nodeXY = mut_XY_count - freq_count_norm * total_pheno
-    nodeXX = mut_XX_count - freq_count * freq_count_norm
-    beta = nodeXY / nodeXX
+        freq_count_norm = freq_count / n
+        mut_XY_count = pygrgl.dot_product(grg, y, TraversalDirection.UP)
 
-    if only_beta:
-        return beta
+        # Vectorized regression components
+        nodeXY = mut_XY_count - freq_count_norm * total_pheno
+        nodeXX = mut_XX_count - freq_count * freq_count_norm
+        beta = nodeXY / nodeXX
 
-    b0 = total_pheno / n - beta * freq_count_norm
+        if only_beta:
+            return beta
 
-    sse = (
-        yy
-        - 2 * b0 * total_pheno
-        - 2 * beta * mut_XY_count
-        + n * b0**2
-        + 2 * b0 * beta * freq_count
-        + beta**2 * mut_XX_count
-    )
+        b0 = total_pheno / n - beta * freq_count_norm
 
-    se = np.sqrt(np.abs(sse / ((n - 2) * nodeXX)))
-    t_stat = beta / se
+        sse = (
+            yy
+            - 2 * b0 * total_pheno
+            - 2 * beta * mut_XY_count
+            + n * b0**2
+            + 2 * b0 * beta * freq_count
+            + beta**2 * mut_XX_count
+        )
 
-    s_tot = yy - (total_pheno**2) / n
-    r2 = 1 - sse / s_tot
+        se = np.sqrt(np.abs(sse / ((n - 2) * nodeXX)))
+        t_stat = beta / se
 
-    cdf_vals = t_distribution.cdf(t_stat, df=n - 2)
-    p_val = 2 * np.where(t_stat > 0, 1 - cdf_vals, cdf_vals)
+        s_tot = yy - (total_pheno**2) / n
+        r2 = 1 - sse / s_tot
 
-    positions = list(
-        map(lambda i: grg.get_mutation_by_id(i).position, range(grg.num_mutations))
-    )
+        cdf_vals = t_distribution.cdf(t_stat, df=n - 2)
+        p_val = 2 * np.where(t_stat > 0, 1 - cdf_vals, cdf_vals)
 
-    # Build DataFrame
-    df = pd.DataFrame(
-        {
-            "POS": positions,
-            "FREQ": freq_count,
-            "BETA": beta,
-            "B0": b0,
-            "SE": se,
-            "R2": r2,
-            "T": t_stat,
-            "P": p_val,
-        }
-    )
+        positions = list(
+            map(lambda i: grg.get_mutation_by_id(i).position, range(grg.num_mutations))
+        )
 
-    return df
+        # Build DataFrame
+        df = pd.DataFrame(
+            {
+                "POS": positions,
+                "FREQ": freq_count,
+                "BETA": beta,
+                "B0": b0,
+                "SE": se,
+                "R2": r2,
+                "T": t_stat,
+                "P": p_val,
+            }
+        )
 
+        return df
 
-def linear_assoc_covar(
-    grg: pygrgl.GRG,
-    Y: np.typing.NDArray,
-    C: np.typing.NDArray,
-    only_beta: bool = False,
-    hide_covars: bool = True,
-) -> pd.DataFrame:
-    """
-    Performs regression for each mutation with covariate adjustment.
-    Uses QR decomposition to project out covariate effects from the phenotype and genotype vectors.
+    def linear_assoc_covar(
+        grg: pygrgl.GRG,
+        Y: np.typing.NDArray,
+        C: np.typing.NDArray,
+        only_beta: bool = False,
+        hide_covars: bool = True,
+    ) -> pd.DataFrame:
+        """
+        Performs regression for each mutation with covariate adjustment.
+        Uses QR decomposition to project out covariate effects from the phenotype and genotype vectors.
 
-    :param Y: Phenotype vector of shape (n_samples,).
-    :type Y: numpy.ndarray
-    :param C: Covariate matrix of shape (n_samples, n_covariates).
-              Should include intercept.
-    :type C: numpy.ndarray
-    :param only_beta: If True, returns only the BETA column in the output.
-    :type only_beta: bool
-    :param hide_covars: If False, includes estimated covariate effects (GAMMA_i) in the output.
-    :type hide_covars: bool
-    :return: A DataFrame containing at least BETA, SE, T, and P columns.
-             If hide_covars is False, also includes GAMMA columns.
-    :rtype: pandas.DataFrame
-    """
-    assert grg.ploidy == 2, "GWAS is only supported on diploid individuals"
+        :param Y: Phenotype vector of shape (n_samples,).
+        :type Y: numpy.ndarray
+        :param C: Covariate matrix of shape (n_samples, n_covariates).
+                Should include intercept.
+        :type C: numpy.ndarray
+        :param only_beta: If True, returns only the BETA column in the output.
+        :type only_beta: bool
+        :param hide_covars: If False, includes estimated covariate effects (GAMMA_i) in the output.
+        :type hide_covars: bool
+        :return: A DataFrame containing at least BETA, SE, T, and P columns.
+                If hide_covars is False, also includes GAMMA columns.
+        :rtype: pandas.DataFrame
+        """
+        assert grg.ploidy == 2, "GWAS is only supported on diploid individuals"
 
-    Q, R = np.linalg.qr(C)
+        with np.errstate(divide="ignore"):
+            Q, R = np.linalg.qr(C)
 
-    # Compute Y adj
-    Yadj = Y - Q @ (Q.T @ Y)
-    # For haploid matrix
-    Yadj2 = np.repeat(Yadj, grg.ploidy)
+            # Compute Y adj
+            Yadj = Y - Q @ (Q.T @ Y)
+            # For haploid matrix
+            Yadj2 = np.repeat(Yadj, grg.ploidy)
 
-    # X^TX
-    t0 = time.perf_counter()
-    mut_XX_count, freq_count = compute_XtX(grg)
-    t1 = time.perf_counter()
+            # X^TX
+            t0 = time.perf_counter()
+            mut_XX_count, freq_count = compute_XtX(grg)
+            t1 = time.perf_counter()
 
-    print("Time: ", t1 - t0)
+            print("Time: ", t1 - t0)
 
-    beta = np.zeros(mut_XX_count.size)
+            beta = np.zeros(mut_XX_count.size)
 
-    # G^TQ
-    Q_hap = np.repeat(Q, grg.ploidy, axis=0)
-    ###Computes G^TQ where Q's rows are duplicated so we can get X^TQ
-    XtQ = pygrgl.matmul(grg, Q_hap.T, TraversalDirection.UP).T
+            # G^TQ
+            Q_hap = np.repeat(Q, grg.ploidy, axis=0)
+            ###Computes G^TQ where Q's rows are duplicated so we can get X^TQ
+            XtQ = pygrgl.matmul(grg, Q_hap.T, TraversalDirection.UP).T
 
-    # Diagonal of (X^TQ)(X^TQ)^T
-    diagonal = (XtQ * XtQ).sum(axis=1)
+            # Diagonal of (X^TQ)(X^TQ)^T
+            diagonal = (XtQ * XtQ).sum(axis=1)
 
-    # Xadj^TXadj
-    xadjTxadj = mut_XX_count - diagonal
-    # Compute (Xadj^TYadj)
-    xadjTyadj = pygrgl.dot_product(grg, Yadj2, TraversalDirection.UP)
+            # Xadj^TXadj
+            xadjTxadj = mut_XX_count - diagonal
+            # Compute (Xadj^TYadj)
+            xadjTyadj = pygrgl.dot_product(grg, Yadj2, TraversalDirection.UP)
 
-    if only_beta:
-        for i in range(mut_XX_count.size):
-            beta[i] = xadjTyadj[i] / xadjTxadj[i]
-        return pd.DataFrame({"BETA": beta})
+            if only_beta:
+                for i in range(mut_XX_count.size):
+                    beta[i] = xadjTyadj[i] / xadjTxadj[i]
+                return pd.DataFrame({"BETA": beta})
 
-    if not hide_covars:
-        QtY = Q.T @ Y
-        gamma0 = np.linalg.solve(R, QtY)
-        gammas = np.zeros((mut_XX_count.size, Q.shape[1]))
+            if not hide_covars:
+                QtY = Q.T @ Y
+                gamma0 = np.linalg.solve(R, QtY)
+                gammas = np.zeros((mut_XX_count.size, Q.shape[1]))
 
-    df = Yadj.shape[0] - Q.shape[1] - 1
-    YY = Yadj.T @ Yadj
+            df = Yadj.shape[0] - Q.shape[1] - 1
+            YY = Yadj.T @ Yadj
 
-    beta = xadjTyadj / xadjTxadj
-    SSE = YY - (xadjTyadj**2) / xadjTxadj
-    se = np.sqrt(np.abs(SSE / (df * xadjTxadj)))
-    t_vals = beta / se
+            beta = xadjTyadj / xadjTxadj
+            SSE = YY - (xadjTyadj**2) / xadjTxadj
+            se = np.sqrt(np.abs(SSE / (df * xadjTxadj)))
+            t_vals = beta / se
 
-    cdf_vals = t_distribution.cdf(t_vals, df)
-    p = 2 * np.where(t_vals > 0, 1 - cdf_vals, cdf_vals)
+            cdf_vals = t_distribution.cdf(t_vals, df)
+            p = 2 * np.where(t_vals > 0, 1 - cdf_vals, cdf_vals)
 
-    # Optional GAMMA calculation
-    gamma_cols = {}
-    if not hide_covars:
-        QtY = Q.T @ Y
-        gamma0 = np.linalg.solve(R, QtY)
-        corrections = np.linalg.solve(R, XtQ.T).T  # (num_snps, num_covars)
-        gammas = gamma0 - beta[:, None] * corrections
-        for j in range(Q.shape[1]):
-            gamma_cols[f"GAMMA_{j}"] = gammas[:, j]
+            # Optional GAMMA calculation
+            gamma_cols = {}
+            if not hide_covars:
+                QtY = Q.T @ Y
+                gamma0 = np.linalg.solve(R, QtY)
+                corrections = np.linalg.solve(R, XtQ.T).T  # (num_snps, num_covars)
+                gammas = gamma0 - beta[:, None] * corrections
+                for j in range(Q.shape[1]):
+                    gamma_cols[f"GAMMA_{j}"] = gammas[:, j]
 
-    # Build output DataFrame
-    df_data = {
-        "BETA": beta,
-        "SE": se,
-        "T": t_vals,
-        "P": p,
-    }
-    df_data.update(gamma_cols)
-    return pd.DataFrame(df_data)
+            # Build output DataFrame
+            df_data = {
+                "BETA": beta,
+                "SE": se,
+                "T": t_vals,
+                "P": p,
+            }
+            df_data.update(gamma_cols)
+            return pd.DataFrame(df_data)

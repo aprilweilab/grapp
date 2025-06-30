@@ -3,7 +3,7 @@ Linear algebra-related operations on GRG. These are typically "generic" operatio
 could apply to many different types of analyses.
 """
 
-from .ops_scipy_adj import SciPyXTXOperator as _SciPyXTXOperator
+from .ops_scipy import SciPyStdXTXOperator as _SciPyStdXTXOperator
 import pygrgl
 import numpy
 from scipy.sparse.linalg import eigs as _scipy_eigs
@@ -15,17 +15,6 @@ def eigs(grg: pygrgl.GRG, first_k: int):
     """
     first_k = min(first_k, grg.num_mutations)
 
-    # XXX How to handle non-segregating mutations?  E.g., freq(i) = 0 or freq(i) = 2N?  Probably best to filter them out before
-    # this point (filtering a GRG is very fast), and throw an error here if we find any.
-    # For now, I just change the frequencies so there is a min of EPSILON and a max of ~0.99
-    # freqs = numpy.maximum(
-    #     pygrgl.matmul(
-    #         grg,
-    #         numpy.ones((1, grg.num_samples)) / (grg.num_samples + 1),
-    #         pygrgl.TraversalDirection.UP,
-    #     )[0],
-    #     numpy.finfo(float).eps,
-    # )
     freqs = pygrgl.matmul(
         grg,
         numpy.ones((1, grg.num_samples)),
@@ -33,7 +22,7 @@ def eigs(grg: pygrgl.GRG, first_k: int):
     )[0] / (grg.num_samples)
 
     eigen_values, eigen_vectors = _scipy_eigs(
-        _SciPyXTXOperator(grg, freqs, haploid=False), k=first_k
+        _SciPyStdXTXOperator(grg, freqs, haploid=False), k=first_k
     )
     return eigen_values, eigen_vectors
 
@@ -48,9 +37,9 @@ def PCs(grg: pygrgl.GRG, first_k: int):
         grg,
         numpy.ones((1, grg.num_samples)),
         pygrgl.TraversalDirection.UP,
-    )[0] /  (grg.num_samples)
+    )[0] / (grg.num_samples)
 
-    op = _SciPyXTXOperator(grg, freqs, haploid=False)
+    op = _SciPyStdXTXOperator(grg, freqs, haploid=False)
 
     eigen_values, eigen_vectors = _scipy_eigs(op, k=first_k)
 

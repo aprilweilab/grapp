@@ -1,25 +1,16 @@
-from grgapp.linalg import eigs
-import argparse
-import pygrgl
-from pathlib import Path
+from typing import Optional
 import numpy
-import json
-from typing import List, Dict, Tuple, Optional
-from io import StringIO
 import os
-import unittest
+import pygrgl
 import subprocess
-from scipy.linalg import eigh
-
-JOBS = 4
-CLEANUP = True
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
-
 INPUT_DIR = os.path.join(THIS_DIR, "input")
 
 
-def construct_grg(input_file: str, output_file: Optional[str] = None) -> str:
+def construct_grg(
+    input_file: str, output_file: Optional[str] = None, jobs: int = 6
+) -> str:
     cmd = [
         "grg",
         "construct",
@@ -28,7 +19,7 @@ def construct_grg(input_file: str, output_file: Optional[str] = None) -> str:
         "-t",
         "2",
         "-j",
-        str(JOBS),
+        str(jobs),
         os.path.join(INPUT_DIR, input_file),
     ]
     if output_file is not None:
@@ -91,20 +82,3 @@ def standardize_X(X: numpy.ndarray):
     # re-zero freq 1 cols
     Xstd[:, zero_sigma] = 0
     return Xstd
-
-
-class TestPCA(unittest.TestCase):
-    def setUp(self):
-        self.grg_filename = construct_grg("test-200-samples.vcf.gz")
-        self.grg = pygrgl.load_immutable_grg(self.grg_filename)
-
-    def test_eigvals(self):
-        X_stand = standardize_X(grg2X(self.grg, diploid=True))
-        D = X_stand.T @ X_stand
-        evals, evects = eigh(D)
-        w = evals[-10:]
-        manual_ordered = numpy.sort(w)[::-1]
-        grg_evals, grg_evects = eigs(self.grg, 10)
-        print(manual_ordered)
-        print(grg_evals)
-        numpy.testing.assert_array_almost_equal(manual_ordered, grg_evals, 3)
