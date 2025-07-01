@@ -20,7 +20,7 @@ INPUT_DIR = os.path.join(THIS_DIR, "input")
 
 class TestPCA(unittest.TestCase):
     @classmethod
-    def setUp(cls):
+    def setUpClass(cls):
         cls.grg_filename = construct_grg("test-200-samples.vcf.gz", "test.pca.grg")
         cls.grg = pygrgl.load_immutable_grg(cls.grg_filename)
 

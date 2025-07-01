@@ -22,7 +22,9 @@ def eigs(grg: pygrgl.GRG, first_k: int):
     )[0] / (grg.num_samples)
 
     eigen_values, eigen_vectors = _scipy_eigs(
-        _SciPyStdXTXOperator(grg, freqs, haploid=False), k=first_k
+        _SciPyStdXTXOperator(grg, freqs, haploid=False),
+        k=first_k,
+        which="LR",
     )
     return eigen_values, eigen_vectors
 
@@ -54,7 +56,5 @@ def PCs(grg: pygrgl.GRG, first_k: int):
     # Compute the “mean‐adjustment” constant for each PC:
     consts = numpy.sum(grg.ploidy * freqs[:, None] * V_std, axis=0)
     PC_scores = raw_pcs - consts[None, :]
-
     PC_unitvar = PC_scores / numpy.sqrt(eigen_values.real)[None, :]
-
     return PC_unitvar
