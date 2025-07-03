@@ -1,4 +1,6 @@
 from . import assoc_cli
+from . import export_cli
+from . import filter_cli
 from . import pca_cli
 
 import argparse
@@ -6,6 +8,8 @@ import sys
 
 CMD_ASSOC = "assoc"
 CMD_PCA = "pca"
+CMD_EXPORT = "export"
+CMD_FILTER = "filter"
 
 
 def main():
@@ -21,6 +25,16 @@ def main():
         help="Extract principal components from the GRG dataset.",
     )
     pca_cli.add_options(pca_parser)
+    export_parser = subparsers.add_parser(
+        CMD_EXPORT,
+        help="Export data from a GRG.",
+    )
+    export_cli.add_options(export_parser)
+    filter_parser = subparsers.add_parser(
+        CMD_FILTER,
+        help="Export data from a GRG.",
+    )
+    filter_cli.add_options(filter_parser)
 
     args = parser.parse_args()
 
@@ -31,6 +45,10 @@ def main():
         assoc_cli.run(args)
     elif args.command == CMD_PCA:
         pca_cli.run(args)
+    elif args.command == CMD_EXPORT:
+        export_cli.run(args)
+    elif args.command == CMD_FILTER:
+        filter_cli.run(args)
     else:
         print(f"Invalid command {args.command}", file=sys.stderr)
         parser.print_help()

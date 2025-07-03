@@ -9,7 +9,10 @@ INPUT_DIR = os.path.join(THIS_DIR, "input")
 
 
 def construct_grg(
-    input_file: str, output_file: Optional[str] = None, jobs: int = 6
+    input_file: str,
+    output_file: Optional[str] = None,
+    jobs: int = 6,
+    is_test_input: bool = True,
 ) -> str:
     cmd = [
         "grg",
@@ -20,7 +23,7 @@ def construct_grg(
         "2",
         "-j",
         str(jobs),
-        os.path.join(INPUT_DIR, input_file),
+        os.path.join(INPUT_DIR, input_file) if is_test_input else input_file,
     ]
     if output_file is not None:
         cmd.extend(["-o", output_file])
