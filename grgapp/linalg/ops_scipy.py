@@ -44,6 +44,60 @@ class SciPyXOperator(LinearOperator):
             )
         )
 
+    def _rmatmat(self, other_matrix):
+        return numpy.transpose(
+            pygrgl.matmul(
+                self.grg,
+                other_matrix.T,
+                self.direction,
+                by_individual=not self.haploid,
+            )
+        )
+
+    def _matvec(self, vect):
+        vect = numpy.array([vect]).T  # Column vector (Mx1)
+        return self._matmat(vect)
+
+    def _rmatvec(self, vect):
+        vect = numpy.array([vect]).T  # Column vector (Nx1)
+        return self._rmatmat(vect)
+
+
+class SciPyXTXOperator(LinearOperator):
+    def __init__(
+        self,
+        grg: pygrgl.GRG,
+        dtype=numpy.float64,
+        haploid: bool = False,
+    ):
+        xtx_shape = (grg.num_mutations, grg.num_mutations)
+        super().__init__(dtype=dtype, shape=xtx_shape)
+        self.x_op = SciPyXOperator(
+            grg,
+            pygrgl.TraversalDirection.UP,
+            dtype=dtype,
+            haploid=haploid,
+        )
+
+    def _matmat(self, other_matrix):
+        D = self.x_op._matmat(other_matrix)
+        return self.x_op._rmatmat(D)
+
+    def _rmatmat(self, other_matrix):
+        return self._matmat(other_matrix)
+
+    def _matvec(self, vect):
+        # Assume direction == UP, then we are operating on X. Given this, we have X: NxM and
+        # the input vector must be of length M.
+        vect = numpy.array([vect]).T  # Column vector (Mx1)
+        return self._matmat(vect)
+
+    def _rmatvec(self, vect):
+        # Assume direction == UP, then we are operating on X^T for rmatvec. Given this, we
+        # have X^T: MxN and the input vector must be of length N.
+        vect = numpy.array([vect]).T  # Column vector (Nx1)
+        return self._rmatmat(vect)
+
 
 class SciPyStandardizedOperator(LinearOperator):
     """
@@ -117,27 +171,27 @@ class SciPyStdXOperator(SciPyStandardizedOperator):
             shape = (grg.num_mutations, self.sample_count)
         super().__init__(grg, freqs, shape, dtype=dtype, haploid=haploid)
 
-    def _matmat(self, other_matrix):
+    def _matmat_direction(self, other_matrix, direction):
         with numpy.errstate(divide="raise"):
-            if self.direction == pygrgl.TraversalDirection.UP:
+            if direction == pygrgl.TraversalDirection.UP:
                 vS = other_matrix.T / self.sigma_corrected
                 XvS = numpy.transpose(
                     pygrgl.matmul(
                         self.grg,
                         vS,
-                        _flip_dir(self.direction),
+                        _flip_dir(direction),
                         by_individual=not self.haploid,
                     )
                 )
                 consts = numpy.sum(self.mult_const * self.freqs * vS, axis=1)
                 return XvS - consts.T
             else:
-                assert self.direction == pygrgl.TraversalDirection.DOWN
+                assert direction == pygrgl.TraversalDirection.DOWN
                 SXv = (
                     pygrgl.matmul(
                         self.grg,
                         other_matrix.T,
-                        _flip_dir(self.direction),
+                        _flip_dir(direction),
                         by_individual=not self.haploid,
                     )
                     / self.sigma_corrected
@@ -149,9 +203,27 @@ class SciPyStdXOperator(SciPyStandardizedOperator):
                 result = numpy.transpose(SXv - sub_const2)
                 return result
 
+    def _matmat(self, other_matrix):
+        return self._matmat_direction(other_matrix, self.direction)
+
+    def _rmatmat(self, other_matrix):
+        return self._matmat_direction(other_matrix, _flip_dir(self.direction))
+
+    def _matvec(self, vect):
+        # Assume direction == UP, then we are operating on X. Given this, we have X: NxM and
+        # the input vector must be of length M.
+        vect = numpy.array([vect]).T  # Column vector (Mx1)
+        return self._matmat(vect)
+
+    def _rmatvec(self, vect):
+        # Assume direction == UP, then we are operating on X^T for rmatvec. Given this, we
+        # have X^T: MxN and the input vector must be of length N.
+        vect = numpy.array([vect]).T  # Column vector (Nx1)
+        return self._rmatmat(vect)
+
 
 # Correlation matrix X^T*X operator on the standardized GRG
-class SciPyStdXTXOperator(SciPyStandardizedOperator):
+class SciPyStdXTXOperator(LinearOperator):
     def __init__(
         self,
         grg: pygrgl.GRG,
@@ -176,45 +248,22 @@ class SciPyStdXTXOperator(SciPyStandardizedOperator):
         :type dtype: numpy.dtype
         """
         xtx_shape = (grg.num_mutations, grg.num_mutations)
-        super().__init__(grg, freqs, xtx_shape, dtype=dtype, haploid=haploid)
+        super().__init__(dtype=dtype, shape=xtx_shape)
+        self.std_x_op = SciPyStdXOperator(
+            grg, pygrgl.TraversalDirection.UP, freqs, haploid=haploid, dtype=dtype
+        )
 
     def _matmat(self, other_matrix):
-        with numpy.errstate(divide="raise"):
-            out1 = numpy.zeros_like(other_matrix.T, dtype=float)
-            vS = numpy.divide(
-                numpy.transpose(other_matrix),
-                self.original_sigma,
-                out=out1,
-                where=self.original_sigma != 0,
-            )
-            XvS = numpy.transpose(
-                pygrgl.matmul(
-                    self.grg,
-                    vS,
-                    pygrgl.TraversalDirection.DOWN,
-                    by_individual=not self.haploid,
-                )
-            )
-            sub_const = (
-                self.mult_const
-                * self.freqs
-                * numpy.transpose(other_matrix)
-                / self.sigma_corrected
-            )
-            D = XvS - numpy.sum(sub_const, axis=1, keepdims=True).T
-            # SXD is a 1xM vector (or KxM, if the input matrix has K columns)
-            SXD = (
-                pygrgl.matmul(
-                    self.grg,
-                    numpy.transpose(D),
-                    pygrgl.TraversalDirection.UP,
-                    by_individual=not self.haploid,
-                )
-                / self.sigma_corrected
-            )
-            col_const = numpy.sum(D, axis=0, keepdims=True).T
-            sub_const2 = (
-                self.mult_const * self.freqs / self.sigma_corrected
-            ) * col_const
-            result = numpy.transpose(SXD - sub_const2)
-            return result
+        D = self.std_x_op._matmat(other_matrix)
+        return self.std_x_op._rmatmat(D)
+
+    def _rmatmat(self, other_matrix):
+        return self._matmat(other_matrix)
+
+    def _matvec(self, vect):
+        vect = numpy.array([vect]).T  # Column vector (Mx1)
+        return self._matmat(vect)
+
+    def _rmatvec(self, vect):
+        vect = numpy.array([vect]).T  # Column vector (Nx1)
+        return self._rmatmat(vect)

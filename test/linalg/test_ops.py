@@ -3,6 +3,7 @@ from grgapp.linalg.ops_scipy import (
     SciPyXOperator,
     SciPyStdXTXOperator,
 )
+from grgapp.util import allele_frequencies
 import pygrgl
 import numpy
 import os
@@ -59,11 +60,7 @@ class TestLinearOperators(unittest.TestCase):
         X_stand = standardize_X(X)
         numpy_result = numpy.matmul(X_stand, random_input)
 
-        freqs = pygrgl.matmul(
-            self.grg,
-            numpy.ones((1, self.grg.num_samples)),
-            pygrgl.TraversalDirection.UP,
-        )[0] / (self.grg.num_samples)
+        freqs = allele_frequencies(self.grg)
         grg_op = SciPyStdXOperator(self.grg, pygrgl.TraversalDirection.UP, freqs)
         grg_result = grg_op._matmat(random_input)
 
@@ -81,11 +78,7 @@ class TestLinearOperators(unittest.TestCase):
         XT_stand = standardize_X(X).T
         numpy_result = numpy.matmul(XT_stand, random_input)
 
-        freqs = pygrgl.matmul(
-            self.grg,
-            numpy.ones((1, self.grg.num_samples)),
-            pygrgl.TraversalDirection.UP,
-        )[0] / (self.grg.num_samples)
+        freqs = allele_frequencies(self.grg)
         grg_op = SciPyStdXOperator(self.grg, pygrgl.TraversalDirection.DOWN, freqs)
         grg_result = grg_op._matmat(random_input)
 
@@ -105,13 +98,19 @@ class TestLinearOperators(unittest.TestCase):
         # (NxM)x(MxK) == NxK
         numpy_result = numpy.matmul(XtX, random_input)
 
-        freqs = pygrgl.matmul(
-            self.grg,
-            numpy.ones((1, self.grg.num_samples)),
-            pygrgl.TraversalDirection.UP,
-        )[0] / (self.grg.num_samples)
+        freqs = allele_frequencies(self.grg)
         grg_op = SciPyStdXTXOperator(self.grg, freqs)
         grg_result = grg_op._matmat(random_input)
+
+        self.assertFalse(numpy.any(numpy.isinf(grg_result)))
+        self.assertFalse(numpy.any(numpy.isinf(numpy_result)))
+        self.assertFalse(numpy.any(numpy.isnan(grg_result)))
+        self.assertFalse(numpy.any(numpy.isnan(numpy_result)))
+        numpy.testing.assert_allclose(grg_result, numpy_result, atol=ABSOLUTE_TOLERANCE)
+
+        # Reversed result should be identical, because XtX.T == XtX
+        numpy_result = numpy.matmul(XtX.T, random_input)
+        grg_result = grg_op._rmatmat(random_input)
 
         self.assertFalse(numpy.any(numpy.isinf(grg_result)))
         self.assertFalse(numpy.any(numpy.isinf(numpy_result)))

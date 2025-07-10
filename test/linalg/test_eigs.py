@@ -1,5 +1,7 @@
-from grgapp.linalg import eigs as grg_eigs
-from grgapp.linalg import PCs
+from grgapp.linalg import (
+    eigs as grg_eigs,
+    MatrixSelection,
+)
 import pygrgl
 import numpy
 import os
@@ -28,7 +30,7 @@ class TestPCA(unittest.TestCase):
         X_stand = standardize_X(grg2X(self.grg, diploid=True))
         D = X_stand.T @ X_stand
         evals, evects = scipy_eigs(D, k=15)
-        grg_evals, grg_evects = grg_eigs(self.grg, 15)
+        grg_evals, grg_evects = grg_eigs(MatrixSelection.XTX, self.grg, 15)
         numpy.testing.assert_array_almost_equal(evals, grg_evals, 3)
         for ev, gev in zip(evects.T, grg_evects.T):
             # Vectors may differ by sign.
