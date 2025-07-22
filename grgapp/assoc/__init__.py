@@ -5,7 +5,6 @@ import numpy as np
 import pandas as pd
 import pygrgl
 import re
-import time
 
 
 def read_covariates_matrix(
@@ -175,11 +174,17 @@ def linear_assoc_no_covar(
     assert grg.ploidy == 2, "GWAS is only supported on diploid individuals"
 
     with np.errstate(divide="ignore"):
-        mut_XX_count, freq_count = compute_XtX(grg)
-        # Treat them as floats so that we get inf for divide by zero below.
-        mut_XX_count = mut_XX_count.astype(np.float64)
-        freq_count = freq_count.astype(np.float64)
-
+        freq_count = pygrgl.matmul(
+            grg,
+            np.ones((1, grg.num_samples), dtype=np.int32),
+            pygrgl.TraversalDirection.UP,
+        ).squeeze()
+        XX = pygrgl.matmul(
+            grg,
+            np.ones((1, grg.num_samples), dtype=np.int32),
+            pygrgl.TraversalDirection.UP,
+            init="xtx",
+        ).squeeze()
         n = grg.num_individuals
 
         y = np.repeat(Y, grg.ploidy)
@@ -191,9 +196,8 @@ def linear_assoc_no_covar(
 
         # Vectorized regression components
         nodeXY = mut_XY_count - freq_count_norm * total_pheno
-        nodeXX = mut_XX_count - freq_count * freq_count_norm
+        nodeXX = XX - freq_count * freq_count_norm
         beta = nodeXY / nodeXX
-
         if only_beta:
             return beta
 
@@ -205,7 +209,7 @@ def linear_assoc_no_covar(
             - 2 * beta * mut_XY_count
             + n * b0**2
             + 2 * b0 * beta * freq_count
-            + beta**2 * mut_XX_count
+            + beta**2 * XX
         )
 
         se = np.sqrt(np.abs(sse / ((n - 2) * nodeXX)))
@@ -273,13 +277,14 @@ def linear_assoc_covar(
         Yadj2 = np.repeat(Yadj, grg.ploidy)
 
         # X^TX
-        t0 = time.perf_counter()
-        mut_XX_count, freq_count = compute_XtX(grg)
-        t1 = time.perf_counter()
+        XX = pygrgl.matmul(
+            grg,
+            np.ones((1, grg.num_samples), dtype=np.int32),
+            pygrgl.TraversalDirection.UP,
+            init="xtx",
+        ).squeeze()
 
-        print("Time: ", t1 - t0)
-
-        beta = np.zeros(mut_XX_count.size)
+        beta = np.zeros(XX.size)
 
         # G^TQ
         Q_hap = np.repeat(Q, grg.ploidy, axis=0)
@@ -290,18 +295,14 @@ def linear_assoc_covar(
         diagonal = (XtQ * XtQ).sum(axis=1)
 
         # Xadj^TXadj
-        xadjTxadj = mut_XX_count - diagonal
+        xadjTxadj = XX - diagonal
+
         # Compute (Xadj^TYadj)
         xadjTyadj = pygrgl.dot_product(grg, Yadj2, TraversalDirection.UP)
 
         if only_beta:
-            for i in range(mut_XX_count.size):
-                beta[i] = xadjTyadj[i] / xadjTxadj[i]
+            beta = xadjTyadj / xadjTxadj
             return pd.DataFrame({"BETA": beta})
-
-        if not hide_covars:
-            QtY = Q.T @ Y
-            gamma0 = np.linalg.solve(R, QtY)
 
         df = Yadj.shape[0] - Q.shape[1] - 1
         YY = Yadj.T @ Yadj

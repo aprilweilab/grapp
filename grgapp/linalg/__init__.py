@@ -14,6 +14,7 @@ import numpy
 from scipy.sparse.linalg import eigs as _scipy_eigs
 from enum import Enum
 from grgapp.util import allele_frequencies
+import pandas as pd
 
 
 class MatrixSelection(Enum):
@@ -75,7 +76,7 @@ def eigs(
     return eigen_values, eigen_vectors
 
 
-def PCs(grg: pygrgl.GRG, first_k: int):
+def PCs(grg: pygrgl.GRG, first_k: int, unitvar: bool = True, include_eig: bool = False):
     """
     Get the PCs for each sample corresponding to kth eigenvector from  A GRG
     """
@@ -86,10 +87,16 @@ def PCs(grg: pygrgl.GRG, first_k: int):
 
     eigen_values, eigen_vectors = _scipy_eigs(op, k=first_k)
 
+    # Standardize all k eigenvectors at once: for later
     eigvects_f64 = eigen_vectors.real.astype(numpy.float64)
     PC_scores = _SciPyStdXOperator(
         grg, pygrgl.TraversalDirection.UP, freqs, haploid=False
     )._matmat(eigvects_f64)
+    if unitvar:
+        PC_scores = PC_scores / numpy.sqrt(eigen_values.real)[None, :]
 
-    PC_unitvar = PC_scores / numpy.sqrt(eigen_values.real)[None, :]
-    return PC_unitvar
+    colnames = [f"PC{i+1}" for i in range(PC_scores.shape[1])]
+    df = pd.DataFrame(PC_scores, columns=colnames)
+    if include_eig:
+        return df, eigen_values, eigen_vectors
+    return df
