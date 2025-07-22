@@ -1,6 +1,4 @@
-from pygrgl import get_topo_order, TraversalDirection
 from scipy.stats import t as t_distribution
-from typing import Iterable
 import numpy as np
 import pandas as pd
 import pygrgl
@@ -79,84 +77,6 @@ def read_pheno(filename: str):
     return last_col
 
 
-def compute_XtX(g: pygrgl.GRG) -> tuple[np.typing.NDArray, np.typing.NDArray]:
-    """
-    Computes X^T X and allele frequencies from the GRG via graph traversal, for graphs that
-    have a ploidy of 1 or 2.
-
-    :return: A tuple containing:
-        - mut_XX (numpy.ndarray): Vector of mutation-specific X^T X values.
-        - freq (numpy.ndarray): Vector of mutation-specific allele counts.
-    :rtype: Tuple[numpy.ndarray, numpy.ndarray]
-    """
-    assert g.ploidy <= 2, f"Ploidy {g.ploidy} not supported for XtX computation"
-
-    # do by node
-    num_nodes = g.num_nodes
-    freq_map = np.zeros(num_nodes)
-    node_XX_count = np.zeros(num_nodes)
-    node_mean = np.zeros(num_nodes)
-    num_samples = g.num_samples
-
-    # In most GRGs, the nodes are ordered topologically. This may not be the case for
-    # a MutableGRG, but those will rarely be used for computation.
-    topo_nodes: Iterable[int] = range(g.num_nodes)
-    if not g.nodes_are_ordered:
-        topo_nodes = list(
-            get_topo_order(g, TraversalDirection.UP, g.get_sample_nodes())
-        )
-
-    for node_id in topo_nodes:
-        if g.ploidy == 2:
-            curr_coals = g.get_num_individual_coals(node_id)
-            assert (
-                curr_coals != pygrgl.COAL_COUNT_NOT_SET
-            ), "XtX only computable on diploid datasets that contain coalescence counts"
-            assert (
-                curr_coals <= num_samples / 2
-            ), "Coalescence counts less than the number of diploid samples"
-            coal_modifier = 2 * curr_coals
-        else:
-            coal_modifier = 1
-
-        # check if sample node
-        if g.is_sample(node_id):
-            node_XX_count[node_id] = 1
-            freq_map[node_id] = 1
-
-        else:
-            count = 0
-            mean_count = 0
-            # check children node to accumulate count
-            frequency = 0
-            for child_id in g.get_down_edges(node_id):
-                count += node_XX_count[child_id]
-                mean_count += node_mean[child_id]
-                frequency += freq_map[child_id]
-
-            node_XX_count[node_id] = count + coal_modifier
-            node_mean[node_id] = mean_count
-            freq_map[node_id] = frequency
-
-    mut_XX_count = np.zeros(g.num_mutations)
-    freq_count = np.zeros(g.num_mutations)
-
-    # extend to mutations
-    mut_pairs = g.get_mutation_node_pairs()
-    for pair in mut_pairs:
-        node_id = pair[1]
-        mut = pair[0]
-        if node_id > num_nodes:
-            mut_XX_count[mut] = 0
-            freq_count[mut] = 0
-        else:
-            XX = node_XX_count[node_id]
-            mut_XX_count[mut] = XX
-            freq_count[mut] = freq_map[node_id]
-
-    return mut_XX_count, freq_count
-
-
 def linear_assoc_no_covar(
     grg: pygrgl.GRG, Y: np.typing.NDArray, only_beta: bool = False
 ) -> pd.DataFrame:
@@ -192,7 +112,7 @@ def linear_assoc_no_covar(
         yy = np.dot(Y, Y)
 
         freq_count_norm = freq_count / n
-        mut_XY_count = pygrgl.dot_product(grg, y, TraversalDirection.UP)
+        mut_XY_count = pygrgl.dot_product(grg, y, pygrgl.TraversalDirection.UP)
 
         # Vectorized regression components
         nodeXY = mut_XY_count - freq_count_norm * total_pheno
@@ -289,7 +209,7 @@ def linear_assoc_covar(
         # G^TQ
         Q_hap = np.repeat(Q, grg.ploidy, axis=0)
         ###Computes G^TQ where Q's rows are duplicated so we can get X^TQ
-        XtQ = pygrgl.matmul(grg, Q_hap.T, TraversalDirection.UP).T
+        XtQ = pygrgl.matmul(grg, Q_hap.T, pygrgl.TraversalDirection.UP).T
 
         # Diagonal of (X^TQ)(X^TQ)^T
         diagonal = (XtQ * XtQ).sum(axis=1)
@@ -298,7 +218,7 @@ def linear_assoc_covar(
         xadjTxadj = XX - diagonal
 
         # Compute (Xadj^TYadj)
-        xadjTyadj = pygrgl.dot_product(grg, Yadj2, TraversalDirection.UP)
+        xadjTyadj = pygrgl.dot_product(grg, Yadj2, pygrgl.TraversalDirection.UP)
 
         if only_beta:
             beta = xadjTyadj / xadjTxadj

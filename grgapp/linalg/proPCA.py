@@ -1,65 +1,7 @@
 from ops_scipy import SciPyStdXOperator as _SciPyStdXOperator
+from util.simple import allele_frequencies
 import numpy as np
 import pygrgl
-from scipy.sparse.linalg import svds
-import time
-import pandas as pd
-import cProfile, pstats, io
-from pstats import SortKey
-
-
-def grg2X(grg: pygrgl.GRG, diploid: bool = False):
-    samples = grg.num_individuals if diploid else grg.num_samples
-    ploidy = grg.ploidy
-    result = np.zeros((samples, grg.num_mutations))
-    muts_above = {}
-    for node_id in reversed(range(grg.num_nodes)):
-        muts = grg.get_mutations_for_node(node_id)
-        ma = []
-        if muts:
-            ma.extend(muts)
-        for parent_id in grg.get_up_edges(node_id):
-            ma.extend(muts_above[parent_id])
-        muts_above[node_id] = ma
-        if grg.is_sample(node_id):
-            indiv = node_id // ploidy
-            for mut_id in muts_above[node_id]:
-                if diploid:
-                    result[indiv][mut_id] += 1
-                else:
-                    result[node_id][mut_id] = 1
-    return result
-
-
-def standardize_X(X: np.ndarray):
-    """
-    X: N×M diploid genotype matrix with entries in {0,1,2}.
-    Returns:
-      Xstd: N×M standardized matrix,
-      freqs: length-M allele freqs f_i,
-      sigma: length-M stddev sqrt(2 f_i (1-f_i))
-    """
-    N, M = X.shape
-    # allele frequency per variant
-    freqs = X.sum(axis=0) / (2 * N)
-    # U is N×M each column = 2 f_i
-    U = 2 * freqs
-    # center
-    Xc = X - U[None, :]
-    # s_i = sqrt(2 f_i (1-f_i))
-    sigma = np.sqrt(2 * freqs * (1 - freqs))
-    # avoid division by zero
-    zero_sigma = sigma == 0
-    if np.any(zero_sigma):
-        print(
-            f"Warning: {zero_sigma.sum()} sites are monomorphic → will stay zero after std."
-        )
-        sigma[zero_sigma] = 1.0
-    # standardize
-    Xstd = Xc / sigma[None, :]
-    # re-zero freq 1 cols
-    Xstd[:, zero_sigma] = 0
-    return Xstd
 
 
 def EM_Matrix(Y, C):
@@ -125,15 +67,17 @@ def get_change(C_new: np.ndarray, C_old: np.ndarray) -> float:
     Compute the relative Frobenius‐norm change between C_new and C_old.
     """
     diff = C_new - C_old
-    return np.linalg.norm(diff, "fro") / (np.linalg.norm(C_old, "fro") + 1e-12)
+    return float(np.linalg.norm(diff, "fro")) / (
+        float(np.linalg.norm(C_old, "fro")) + 1e-12
+    )
 
 
 def main(
     grg,
-    k: float = 10,
+    k: int = 10,
     l: float = -1,
     g: float = 3,
-    max_iterations: float = -1,
+    max_iterations: int = -1,
     convergence_lim: float = -1,
 ):
     if max_iterations == -1:
@@ -141,11 +85,7 @@ def main(
     if l == -1:
         l = k
 
-    freqs = pygrgl.matmul(
-        grg,
-        np.ones((1, grg.num_samples)),
-        pygrgl.TraversalDirection.UP,
-    )[0] / (grg.num_samples)
+    freqs = allele_frequencies(grg)
 
     C0 = np.random.normal(loc=0, scale=1, size=(grg.num_mutations, 2 * k))
     for i in range(max_iterations):
