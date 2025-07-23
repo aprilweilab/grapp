@@ -2,6 +2,7 @@ from . import assoc_cli
 from . import export_cli
 from . import filter_cli
 from . import pca_cli
+from grgapp.util.simple import UserInputError
 
 import argparse
 import sys
@@ -36,23 +37,27 @@ def main():
     )
     filter_cli.add_options(filter_parser)
 
-    args = parser.parse_args()
+    try:
+        args = parser.parse_args()
 
-    if args.command is None:
-        parser.print_help()
-        exit(1)
-    elif args.command == CMD_ASSOC:
-        assoc_cli.run(args)
-    elif args.command == CMD_PCA:
-        pca_cli.run(args)
-    elif args.command == CMD_EXPORT:
-        export_cli.run(args)
-    elif args.command == CMD_FILTER:
-        filter_cli.run(args)
-    else:
-        print(f"Invalid command {args.command}", file=sys.stderr)
-        parser.print_help()
-        exit(1)
+        if args.command is None:
+            parser.print_help()
+            exit(1)
+        elif args.command == CMD_ASSOC:
+            assoc_cli.run(args)
+        elif args.command == CMD_PCA:
+            pca_cli.run(args)
+        elif args.command == CMD_EXPORT:
+            export_cli.run(args)
+        elif args.command == CMD_FILTER:
+            filter_cli.run(args)
+        else:
+            print(f"Invalid command {args.command}", file=sys.stderr)
+            parser.print_help()
+            exit(1)
+    except (FileNotFoundError, UserInputError) as e:
+        print(f"Command failed with error: {str(e)}", file=sys.stderr)
+        exit(2)
 
 
 if __name__ == "__main__":

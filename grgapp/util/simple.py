@@ -6,6 +6,10 @@ import pygrgl
 import numpy
 
 
+class UserInputError(Exception):
+    pass
+
+
 def allele_frequencies(grg: pygrgl.GRG) -> numpy.typing.NDArray:
     """
     Get the allele frequencies for the mutations in the given GRG.
