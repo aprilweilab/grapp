@@ -1,4 +1,4 @@
-from grgapp.util.igd import (
+from grapp.util.igd import (
     export_igd,
     igd_to_vcf,
 )

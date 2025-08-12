@@ -7,7 +7,7 @@ from typing import List, Tuple, Optional, Union
 import pygrgl
 import os
 
-from grgapp.util.simple import UserInputError
+from grapp.util.simple import UserInputError
 
 
 def grg_save_individuals(

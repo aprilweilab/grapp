@@ -1,7 +1,6 @@
-from grgapp.linalg import (
+from grapp.linalg import (
     PCs,
 )
-from .util import numpy_to_tsv
 import argparse
 import os
 import pygrgl
@@ -13,6 +12,7 @@ def add_options(subparser):
         "-d",
         "--dimensions",
         default=10,
+        type=int,
         help="The number of PCs to extract. Default: 10.",
     )
     subparser.add_argument(
@@ -21,19 +21,26 @@ def add_options(subparser):
         default=None,
         help='Output filename to write the PCs to. Default: "<grg_input>.pcs.tsv"',
     )
+    subparser.add_argument(
+        "--normalize",
+        action="store_true",
+        help="Normalize the PCs according to sqrt(eigenvalue) for each.",
+    )
+    subparser.add_argument(
+        "--pro-pca",
+        action="store_true",
+        help="Use the ProPCA algorithm to compute principle components.",
+    )
 
 
 def run(args):
     grg = pygrgl.load_immutable_grg(args.grg_input)
-    # TODO: options for normalization, etc.?
-    scores = PCs(grg, args.dimensions)
+    scores = PCs(grg, args.dimensions, args.normalize, use_pro_pca=args.pro_pca)
 
     if args.pcs_out is None:
         args.pcs_out = f"{os.path.basename(args.grg_input)}.pcs.tsv"
 
-    with open(args.pcs_out, "w") as fout:
-        cols = [f"PC_{i}" for i in range(args.dimensions)]
-        numpy_to_tsv(fout, scores, cols)
+    scores.to_csv(args.pcs_out)
 
 
 if __name__ == "__main__":

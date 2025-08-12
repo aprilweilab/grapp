@@ -1,9 +1,9 @@
-from grgapp.linalg.ops_scipy import (
+from grapp.linalg.ops_scipy import (
     SciPyStdXOperator,
     SciPyXOperator,
     SciPyStdXTXOperator,
 )
-from grgapp.util import allele_frequencies
+from grapp.util import allele_frequencies
 import pygrgl
 import numpy
 import os

@@ -3,18 +3,22 @@ Linear algebra-related operations on GRG. These are typically "generic" operatio
 could apply to many different types of analyses.
 """
 
-from .ops_scipy import (
+import numpy
+import pandas as pd
+import pygrgl
+from enum import Enum
+from numpy.typing import NDArray
+from scipy.sparse.linalg import eigs as _scipy_eigs
+from typing import Tuple
+
+from grapp.linalg.ops_scipy import (
     SciPyXOperator as _SciPyXOperator,
     SciPyXTXOperator as _SciPyXTXOperator,
     SciPyStdXOperator as _SciPyStdXOperator,
     SciPyStdXTXOperator as _SciPyStdXTXOperator,
 )
-import pygrgl
-import numpy
-from scipy.sparse.linalg import eigs as _scipy_eigs
-from enum import Enum
-from grgapp.util import allele_frequencies
-import pandas as pd
+from grapp.linalg.proPCA import get_pcs_propca
+from grapp.util import allele_frequencies
 
 
 class MatrixSelection(Enum):
@@ -29,7 +33,7 @@ def eigs(
     first_k: int,
     standardized: bool = True,
     haploid: bool = False,
-):
+) -> Tuple[NDArray, NDArray]:
     """
     Get the first K eigen values and vectors from a GRG.
 
@@ -76,11 +80,20 @@ def eigs(
     return eigen_values, eigen_vectors
 
 
-def PCs(grg: pygrgl.GRG, first_k: int, unitvar: bool = True, include_eig: bool = False):
+def get_eig_pcs(grg: pygrgl.GRG, first_k: int) -> Tuple[NDArray, NDArray, NDArray]:
     """
-    Get the PCs for each sample corresponding to kth eigenvector from  A GRG
+    Get the principle components for each sample corresponding to the first :math:`k` eigenvectors from a GRG,
+    using an iterative eigenvector decomposition method.
+
+    :param grg: The GRG to perform PCA on.
+    :type grg: pygrgl.GRG
+    :param first_k: The number of eigenvectors/values to use. These correspond to the `k` largest
+        eigenvalues.
+    :type first_k: int
+    :return: A triple (PC_scores, eigen_values, eigen_vectors) where each is a numpy array.
+    :rtype: numpy.ndarray
     """
-    first_k = min(first_k, grg.num_mutations)
+
     freqs = allele_frequencies(grg)
 
     op = _SciPyStdXTXOperator(grg, freqs, haploid=False)
@@ -92,11 +105,45 @@ def PCs(grg: pygrgl.GRG, first_k: int, unitvar: bool = True, include_eig: bool =
     PC_scores = _SciPyStdXOperator(
         grg, pygrgl.TraversalDirection.UP, freqs, haploid=False
     )._matmat(eigvects_f64)
+    return PC_scores, eigen_values, eigen_vectors
+
+
+def PCs(
+    grg: pygrgl.GRG,
+    first_k: int,
+    unitvar: bool = True,
+    include_eig: bool = False,
+    use_pro_pca: bool = False,
+):
+    """
+    Get the principle components for each sample corresponding to the first :math:`k` eigenvectors from a GRG.
+
+    :param grg: The GRG to perform PCA on.
+    :type grg: pygrgl.GRG
+    :param first_k: The number of eigenvectors/values to use. These correspond to the `k` largest
+        eigenvalues.
+    :type first_k: int
+    :param unitvar: When True, normalize the PCs by dividing by the square root of each
+        corresponding eigenvalue. Default: True.
+    :type unitvar: bool
+    :param include_eig: When True, the return value is a triple of (DataFrame, EigenValues, EigenVectors),
+        where the eigen values and vectors are as returned by scipy.sparse.linalg.eigs(). Default: False.
+    :type include_eig: bool
+    :return: A pandas.DataFrame with a row per individual and a column per principle component.
+    :rtype: pandas.DataFrame
+    """
+    first_k = min(first_k, grg.num_mutations)
+    if use_pro_pca:
+        PC_scores, eigen_values, eigen_vectors = get_pcs_propca(grg, first_k)
+    else:
+        PC_scores, eigen_values, eigen_vectors = get_eig_pcs(grg, first_k)
+
     if unitvar:
         PC_scores = PC_scores / numpy.sqrt(eigen_values.real)[None, :]
 
     colnames = [f"PC{i+1}" for i in range(PC_scores.shape[1])]
     df = pd.DataFrame(PC_scores, columns=colnames)
+    df.index.name = "Individual"
     if include_eig:
         return df, eigen_values, eigen_vectors
     return df

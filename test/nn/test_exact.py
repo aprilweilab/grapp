@@ -1,4 +1,4 @@
-from grgapp import nn as grgnn
+from grapp import nn as grgnn
 import numpy
 import numpy.typing
 import os

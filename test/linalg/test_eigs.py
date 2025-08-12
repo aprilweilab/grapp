@@ -1,4 +1,4 @@
-from grgapp.linalg import (
+from grapp.linalg import (
     eigs as grg_eigs,
     MatrixSelection,
 )

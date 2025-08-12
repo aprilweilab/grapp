@@ -5,7 +5,7 @@ from pyigd.extra import (
     collect_next_site,
 )
 from contextlib import contextmanager
-from grgapp.util.filter import split_by_ranges
+from grapp.util.filter import split_by_ranges
 
 import numpy
 import os

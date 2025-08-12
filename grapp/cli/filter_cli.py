@@ -1,12 +1,12 @@
 import argparse
 import os
 
-from grgapp.util.filter import (
+from grapp.util.filter import (
     grg_save_individuals,
     grg_save_range,
     grg_save_samples,
 )
-from grgapp.util.simple import UserInputError
+from grapp.util.simple import UserInputError
 
 
 def list_or_filename(arg_value):

@@ -1,4 +1,4 @@
-from grgapp.assoc import (
+from grapp.assoc import (
     read_covariates_matrix,
     read_pheno,
     linear_assoc_covar,

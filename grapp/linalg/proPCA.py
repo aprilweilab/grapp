@@ -1,24 +1,12 @@
-from ops_scipy import SciPyStdXOperator as _SciPyStdXOperator
-from util.simple import allele_frequencies
+from grapp.linalg.ops_scipy import SciPyStdXOperator as _SciPyStdXOperator
+from grapp.util.simple import allele_frequencies
+from numpy.typing import NDArray
+from typing import Tuple
 import numpy as np
 import pygrgl
 
 
-def EM_Matrix(Y, C):
-    ###Compute E
-    E = np.linalg.inv(C.T @ C) @ C.T
-    print(E.shape)
-    ###Find stuff for standardization
-    X = E @ Y.T
-    ###Compute M
-    M = X.T @ np.linalg.inv(X @ X.T)
-    ###Compute C
-    C = Y.T @ M
-    ###Repeat
-    return C
-
-
-def EM(grg: pygrgl.GRG, C: np.typing.NDArray, freqs: np.typing.NDArray):
+def _EM(grg: pygrgl.GRG, C: NDArray, freqs: NDArray) -> NDArray:
     ###Compute E
     E = np.linalg.inv(C.T @ C) @ C.T
     ###Find stuff for standardization
@@ -37,9 +25,9 @@ def EM(grg: pygrgl.GRG, C: np.typing.NDArray, freqs: np.typing.NDArray):
     return C
 
 
-def compute_pcs_from_C(
+def _compute_pcs_from_C(
     C: np.ndarray, grg: pygrgl.GRG, freqs: np.typing.NDArray, k_orig: int
-):
+) -> Tuple[NDArray, NDArray, NDArray]:
     # 1 Orthonormalize columns of C
     Q, R = np.linalg.qr(C, mode="reduced")
 
@@ -59,10 +47,10 @@ def compute_pcs_from_C(
     # 5 Sample scores
     scores = Vt[:k_orig, :].T
 
-    return evecs, evals, scores
+    return scores, evals, evecs
 
 
-def get_change(C_new: np.ndarray, C_old: np.ndarray) -> float:
+def _get_change(C_new: np.ndarray, C_old: np.ndarray) -> float:
     """
     Compute the relative Frobenius‐norm change between C_new and C_old.
     """
@@ -72,14 +60,25 @@ def get_change(C_new: np.ndarray, C_old: np.ndarray) -> float:
     )
 
 
-def main(
-    grg,
+def get_pcs_propca(
+    grg: pygrgl.GRG,
     k: int = 10,
     l: float = -1,
     g: float = 3,
     max_iterations: int = -1,
-    convergence_lim: float = -1,
+    convergence_lim: float = 0.005,
+    verbose: bool = False,
 ):
+    if verbose:
+
+        def vlog(msg):
+            print(msg)
+
+    else:
+
+        def vlog(msg):
+            pass
+
     if max_iterations == -1:
         max_iterations = k + 2
     if l == -1:
@@ -89,24 +88,12 @@ def main(
 
     C0 = np.random.normal(loc=0, scale=1, size=(grg.num_mutations, 2 * k))
     for i in range(max_iterations):
-        C = EM(grg, C0, freqs)
+        C = _EM(grg, C0, freqs)
         if convergence_lim != -1 and i % g == 0:
-            difference = get_change(C, C0)
-            print(difference)
+            difference = _get_change(C, C0)
             if difference <= convergence_lim:
-                print(f"Converged after {i} iterations with delta {difference}")
+                vlog(f"Converged after {i} iterations with delta {difference}")
                 break
         C0 = C
 
-    evec, eval, scores = compute_pcs_from_C(C0, grg, freqs, 10)
-
-    print(evec[0])
-    for i in range(10):
-        print(scores[i])
-
-
-if __name__ == "__main__":
-    grg = pygrgl.load_immutable_grg(
-        "/home/chris/GRGWAS-Cov/ALL.chr10.phase3_shapeit2_mvncall_integrated_v5a.20130502.genotypes.igd.final.grg"
-    )
-    main(grg, convergence_lim=0.005)
+    return _compute_pcs_from_C(C0, grg, freqs, k)

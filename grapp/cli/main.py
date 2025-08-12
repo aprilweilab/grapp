@@ -1,8 +1,8 @@
-from . import assoc_cli
-from . import export_cli
-from . import filter_cli
-from . import pca_cli
-from grgapp.util.simple import UserInputError
+from grapp.cli import assoc_cli
+from grapp.cli import export_cli
+from grapp.cli import filter_cli
+from grapp.cli import pca_cli
+from grapp.util.simple import UserInputError
 
 import argparse
 import sys

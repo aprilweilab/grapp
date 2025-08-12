@@ -1,6 +1,6 @@
 import pygrgl
 import numpy
-import numpy.typing
+from numpy.typing import NDArray
 from typing import List
 
 
@@ -20,7 +20,11 @@ class NearestNeighborContext:
         return self._grg
 
     @property
-    def muts_above(self):
+    def muts_above(self) -> NDArray:
+        """
+        Vector of length grg.num_nodes, where each node's value is the number of Mutations above that node
+        in the graph.
+        """
         if self._muts_above is None:
             # One-time calculation of how many mutations above each node.
             self._muts_above = pygrgl.matmul(
@@ -29,10 +33,15 @@ class NearestNeighborContext:
                 pygrgl.TraversalDirection.DOWN,
                 emit_all_nodes=True,
             )[0]
+        assert self._muts_above is not None
         return self._muts_above
 
     @property
-    def samps_below(self):
+    def samps_below(self) -> NDArray:
+        """
+        Vector of length grg.num_nodes, where each node's value is the number of sample nodes below that
+        node in the graph.
+        """
         if self._samps_below is None:
             # One-time calculation of how many samples beneath each node.
             self._samps_below = pygrgl.matmul(
@@ -41,6 +50,7 @@ class NearestNeighborContext:
                 pygrgl.TraversalDirection.UP,
                 emit_all_nodes=True,
             )[0]
+        assert self._samps_below is not None
         return self._samps_below
 
     def exact_hamming_dists(

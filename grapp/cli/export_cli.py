@@ -3,7 +3,7 @@ import gzip
 import os
 import sys
 
-from grgapp.util.igd import (
+from grapp.util.igd import (
     export_igd,
     export_vcf,
 )

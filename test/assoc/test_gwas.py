@@ -4,7 +4,7 @@ import os
 import pandas as pd
 import subprocess
 import pygrgl
-from grgapp.assoc import linear_assoc_no_covar, read_pheno
+from grapp.assoc import linear_assoc_no_covar, read_pheno
 from io import StringIO
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
