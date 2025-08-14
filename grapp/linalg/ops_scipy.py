@@ -7,7 +7,7 @@ from typing import Tuple, Union, List
 from pygrgl import TraversalDirection
 
 try:
-    from typing import TypeAlias
+    from typing import TypeAlias  # type: ignore
 except ImportError:
     from typing_extensions import TypeAlias
 import numpy
