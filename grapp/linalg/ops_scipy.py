@@ -3,8 +3,13 @@ Linear operators that are compatible with scipy.
 """
 
 from scipy.sparse.linalg import LinearOperator
-from typing import Tuple, Union, List, TypeAlias
+from typing import Tuple, Union, List
 from pygrgl import TraversalDirection
+
+try:
+    from typing import TypeAlias
+except ImportError:
+    from typing_extensions import TypeAlias
 import numpy
 import pygrgl
 
