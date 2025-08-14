@@ -3,7 +3,8 @@ Linear operators that are compatible with scipy.
 """
 
 from scipy.sparse.linalg import LinearOperator
-from typing import Tuple, List
+from pygrgl import TraversalDirection
+from typing import Tuple, Union, List
 import concurrent.futures
 import numpy
 import pygrgl
@@ -14,51 +15,90 @@ except ImportError:
     from typing_extensions import TypeAlias  # type: ignore
 
 
-def _flip_dir(direction: pygrgl.TraversalDirection) -> pygrgl.TraversalDirection:
-    return (
-        pygrgl.TraversalDirection.UP
-        if direction == pygrgl.TraversalDirection.DOWN
-        else pygrgl.TraversalDirection.DOWN
-    )
+_DOWN = TraversalDirection.DOWN
+_UP = TraversalDirection.UP
+
+
+def _flip_dir(direction: TraversalDirection) -> TraversalDirection:
+    return _UP if direction == _DOWN else _DOWN
+
+
+def _transpose_shape(shape: Tuple[int, int]) -> Tuple[int, int]:
+    return (shape[1], shape[0])
 
 
 class SciPyXOperator(LinearOperator):
+    """
+    A scipy.sparse.linalg.LinearOperator on the genotype matrix represented by the GRG, which allows for
+    multiplication between the GRG and a matrix or vector. This is for the non-standardized matrix, which
+    just contains discrete allele counts.
+
+    Can perform the operation :math:`X \\times A` (_matmat) or :math:`X \\times \overrightarrow{v}` (_matvec).
+
+    :param grg: The GRG the operator will multiply against.
+    :type grg: pygrgl.GRG
+    :param direction: Determines whether the matrix is :math:`X` (pygrgl.TraversalDirection.UP) or
+        :math:`X^T` (pygrgl.TraversalDirection.DOWN).
+    :type direction: pygrgl.TraversalDirection
+    :param dtype: The numpy.dtype to use.
+    :type dtype: TypeAlias
+    :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
+        genotype matrix. Default: False.
+    :type haploid: bool
+    :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
+        mutation_filter) instead of NxM. Default: empty filter.
+    :type mutation_filter: Union[List[int], numpy.typing.NDArray]
+    """
+
     def __init__(
         self,
         grg: pygrgl.GRG,
-        direction: pygrgl.TraversalDirection,
-        dtype=numpy.float64,
+        direction: TraversalDirection,
+        dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
+        mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
     ):
         self.haploid = haploid
         self.grg = grg
         self.sample_count = grg.num_samples if haploid else grg.num_individuals
         self.direction = direction
-        if self.direction == pygrgl.TraversalDirection.UP:
-            shape = (self.sample_count, grg.num_mutations)
-        else:
-            shape = (grg.num_mutations, self.sample_count)
+        self.mutation_filter = mutation_filter
+        self.grg_shape = (self.sample_count, grg.num_mutations)
+        shape = (
+            self.grg_shape
+            if not mutation_filter
+            else (self.grg_shape[0], len(self.mutation_filter))
+        )
+        if self.direction == _DOWN:
+            shape = _transpose_shape(shape)
         super().__init__(dtype=dtype, shape=shape)
 
-    def _matmat(self, other_matrix):
-        return numpy.transpose(
-            pygrgl.matmul(
-                self.grg,
-                other_matrix.T,
-                _flip_dir(self.direction),
-                by_individual=not self.haploid,
+    def _matmat_helper(
+        self, other_matrix: numpy.typing.NDArray, mult_dir: TraversalDirection
+    ):
+        if self.mutation_filter and mult_dir == _DOWN:
+            A = numpy.zeros(
+                (other_matrix.shape[1], self.grg_shape[1]), dtype=other_matrix.dtype
             )
+            A[:, self.mutation_filter] = other_matrix.T  # type: ignore
+        else:
+            A = other_matrix.T
+        result = pygrgl.matmul(
+            self.grg,
+            A,
+            mult_dir,
+            by_individual=not self.haploid,
         )
+        Y = result
+        if self.mutation_filter and mult_dir == _UP:
+            Y = Y[:, self.mutation_filter]  # type: ignore
+        return Y.T
+
+    def _matmat(self, other_matrix):
+        return self._matmat_helper(other_matrix, _flip_dir(self.direction))
 
     def _rmatmat(self, other_matrix):
-        return numpy.transpose(
-            pygrgl.matmul(
-                self.grg,
-                other_matrix.T,
-                self.direction,
-                by_individual=not self.haploid,
-            )
-        )
+        return self._matmat_helper(other_matrix, self.direction)
 
     def _matvec(self, vect):
         vect = numpy.array([vect]).T  # Column vector (Mx1)
@@ -70,19 +110,42 @@ class SciPyXOperator(LinearOperator):
 
 
 class SciPyXTXOperator(LinearOperator):
+    """
+    A scipy.sparse.linalg.LinearOperator on the matrix :math:`X^TX` represented by the GRG.
+    This is for the non-standardized matrix, which just contains discrete allele counts, but it is not
+    centered at the mean, so it is not quite the covariance matrix.
+
+    Can perform the operation :math:`X^T \\times X \\times A` (_matmat) or
+    :math:`X \\times X \\times \overrightarrow{v}` (_matvec).
+
+    :param grg: The GRG the operator will multiply against.
+    :type grg: pygrgl.GRG
+    :param dtype: The numpy.dtype to use.
+    :type dtype: TypeAlias
+    :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
+        genotype matrix. Default: False.
+    :type haploid: bool
+    :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
+        mutation_filter) instead of NxM. Default: empty filter.
+    :type mutation_filter: Union[List[int], numpy.typing.NDArray]
+    """
+
     def __init__(
         self,
         grg: pygrgl.GRG,
-        dtype=numpy.float64,
+        dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
+        mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
     ):
-        xtx_shape = (grg.num_mutations, grg.num_mutations)
+        num_muts = grg.num_mutations if not mutation_filter else len(mutation_filter)
+        xtx_shape = (num_muts, num_muts)
         super().__init__(dtype=dtype, shape=xtx_shape)
         self.x_op = SciPyXOperator(
             grg,
-            pygrgl.TraversalDirection.UP,
+            _UP,
             dtype=dtype,
             haploid=haploid,
+            mutation_filter=mutation_filter,
         )
 
     def _matmat(self, other_matrix):
@@ -105,99 +168,125 @@ class SciPyXTXOperator(LinearOperator):
         return self._rmatmat(vect)
 
 
-class SciPyStandardizedOperator(LinearOperator):
-    """
-    (Abstract) base class for GRG-based scipy LinearOperators that standardize the underlying
-    genotype matrix.
-    """
-
+# (Abstract) base class for GRG-based scipy LinearOperators that standardize the underlying
+# genotype matrix.
+class _SciPyStandardizedOperator(LinearOperator):
     def __init__(
         self,
         grg: pygrgl.GRG,
         freqs: numpy.typing.NDArray,
         shape: Tuple[int, int],
-        dtype=numpy.float64,
+        dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
     ):
         self.haploid = haploid
         self.grg = grg
         self.freqs = freqs
         self.mult_const = 1 if self.haploid else grg.ploidy
+        self.sample_count = grg.num_samples if haploid else grg.num_individuals
 
         # TODO: there might be other normalization approachs besides this. For example, FlashPCA2 has different
         # options for what to use (this is the P-trial binomial).
-        raw = self.mult_const * freqs * (1.0 - freqs)
+        raw = self.mult_const * self.freqs * (1.0 - self.freqs)
 
         # Two versions of sigma, the second flips 0 values (which means the frequency was
         # either 1 or 0 for the mutation) to 1 values so we can use it for division.
-        self.original_sigma = numpy.sqrt(raw)
+        original_sigma = numpy.sqrt(raw)
         self.sigma_corrected = numpy.where(
-            self.original_sigma == 0,
+            original_sigma == 0,
             1,
-            self.original_sigma,
+            original_sigma,
         )
         super().__init__(dtype=dtype, shape=shape)
 
 
 # Operator on the standardized GRG X or X^T (based on the direction chosen)
-class SciPyStdXOperator(SciPyStandardizedOperator):
+class SciPyStdXOperator(_SciPyStandardizedOperator):
+    """
+    A scipy.sparse.linalg.LinearOperator on the genotype matrix represented by the GRG, which allows for
+    multiplication between the GRG and a matrix or vector. This is for the standardized matrix, which is
+    centered to the mean (based on allele frequencies) and standard devation (based on the binomial distribution
+    where each individual is the result of :math:`p`, the ploidy, trials).
+
+    Can perform the operation :math:`X \\times A` (_matmat) or :math:`X \\times \overrightarrow{v}` (_matvec).
+
+    :param grg: The GRG the operator will multiply against.
+    :type grg: pygrgl.GRG
+    :param direction: Determines whether the matrix is :math:`X` (pygrgl.TraversalDirection.UP) or
+        :math:`X^T` (pygrgl.TraversalDirection.DOWN).
+    :type direction: pygrgl.TraversalDirection
+    :param freqs: A vector of length num_mutations, containing the allele frequency for all mutations.
+        Indexed by the mutation ID of the mutation.
+    :type freqs: numpy.ndarray
+    :param dtype: The numpy.dtype to use.
+    :type dtype: TypeAlias
+    :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
+        genotype matrix. Default: False.
+    :type haploid: bool
+    :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
+        mutation_filter) instead of NxM. Default: empty filter.
+    :type mutation_filter: Union[List[int], numpy.typing.NDArray]
+    """
+
     def __init__(
         self,
         grg: pygrgl.GRG,
         direction: pygrgl.TraversalDirection,
         freqs: numpy.typing.NDArray,
+        dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
-        dtype=numpy.float64,
+        mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
     ):
-        """
-        Construct a LinearOperator compatible with scipy's sparse linear algebra module.
-        Let X be the genotype matrix, as represented by the GRG, then this operator computes either
-        the product (transpose(X) * v) or (X * v), where v is a vector of length num_mutations or
-        num_samples depending on the direction.
-
-        :param grg: The GRG the operator will multiply against.
-        :type grg: pygrgl.GRG
-        :param direction: The direction of GRG traversal, which defines whether we are multiplying against
-            the X matrix (NxM, the UP direction) or the X^T matrix (MxN, the DOWN direction).
-        :type direction: pygrgl.TraversalDirection
-        :param freqs: A vector of length num_mutations, containing the allele frequency for all mutations.
-            Indexed by the mutation ID of the mutation.
-        :type freqs: numpy.ndarray
-        :param haploid: Set to True to perform haploid computations instead of the ploidy of the individuals
-            in the GRG.
-        :type haploid: bool
-        :param dtype: The numpy.dtype to use for the computation.
-        :type dtype: numpy.dtype
-        """
         self.direction = direction
         self.sample_count = grg.num_samples if haploid else grg.num_individuals
-        if self.direction == pygrgl.TraversalDirection.UP:
-            shape = (self.sample_count, grg.num_mutations)
-        else:
-            shape = (grg.num_mutations, self.sample_count)
+        self.mutation_filter = mutation_filter
+        self.grg_shape = (self.sample_count, grg.num_mutations)
+        shape = (
+            self.grg_shape
+            if not mutation_filter
+            else (self.grg_shape[0], len(self.mutation_filter))
+        )
+        if self.direction == _DOWN:
+            shape = _transpose_shape(shape)
         super().__init__(grg, freqs, shape, dtype=dtype, haploid=haploid)
 
     def _matmat_direction(self, other_matrix, direction):
-        with numpy.errstate(divide="raise"):
-            if direction == pygrgl.TraversalDirection.UP:
-                vS = other_matrix.T / self.sigma_corrected
-                XvS = numpy.transpose(
-                    pygrgl.matmul(
-                        self.grg,
-                        vS,
-                        _flip_dir(direction),
-                        by_individual=not self.haploid,
-                    )
+        mult_dir = _flip_dir(direction)
+
+        def expandm(matrix):
+            if self.mutation_filter and mult_dir == _DOWN:
+                result = numpy.zeros(
+                    (matrix.shape[0], self.grg_shape[1]), dtype=matrix.dtype
                 )
-                consts = numpy.sum(self.mult_const * self.freqs * vS, axis=1)
-                return XvS - consts.T
+                result[:, self.mutation_filter] = matrix  # type: ignore
+                return result
+            return matrix
+
+        def contractm(matrix):
+            if self.mutation_filter and mult_dir == _UP:
+                return matrix[:, self.mutation_filter]  # type: ignore
+            return matrix
+
+        with numpy.errstate(divide="raise"):
+            if direction == _UP:
+                vS = expandm(other_matrix.T) / self.sigma_corrected
+                XvS = pygrgl.matmul(
+                    self.grg,
+                    vS,
+                    mult_dir,
+                    by_individual=not self.haploid,
+                )
+                consts = numpy.array(
+                    [numpy.sum(self.mult_const * self.freqs * vS, axis=1)]
+                ).T
+                return contractm(XvS - consts).T
             else:
-                assert direction == pygrgl.TraversalDirection.DOWN
+                assert direction == _DOWN
                 SXv = (
                     pygrgl.matmul(
                         self.grg,
-                        other_matrix.T,
-                        _flip_dir(direction),
+                        expandm(other_matrix.T),
+                        mult_dir,
                         by_individual=not self.haploid,
                     )
                     / self.sigma_corrected
@@ -206,8 +295,7 @@ class SciPyStdXOperator(SciPyStandardizedOperator):
                 sub_const2 = (
                     self.mult_const * self.freqs / self.sigma_corrected
                 ) * col_const
-                result = numpy.transpose(SXv - sub_const2)
-                return result
+                return contractm(SXv - sub_const2).T
 
     def _matmat(self, other_matrix):
         return self._matmat_direction(other_matrix, self.direction)
@@ -230,33 +318,49 @@ class SciPyStdXOperator(SciPyStandardizedOperator):
 
 # Correlation matrix X^T*X operator on the standardized GRG
 class SciPyStdXTXOperator(LinearOperator):
+    """
+    A scipy.sparse.linalg.LinearOperator on the matrix :math:`X^TX` represented by the GRG.
+    This is for the standardized matrix, which is centered to the mean (based on allele
+    frequencies) and standard devation (based on the binomial distribution where each individual
+    is the result of :math:`p`, the ploidy, trials).
+
+    This operator performs multiplications against the correlation matrix of the genotype matrix
+    underlying the GRG. Can perform the operation :math:`X^T \\times X \\times A` (_matmat) or
+    :math:`X \\times X \\times \overrightarrow{v}` (_matvec).
+
+    :param grg: The GRG the operator will multiply against.
+    :type grg: pygrgl.GRG
+    :param freqs: A vector of length num_mutations, containing the allele frequency for all mutations.
+        Indexed by the mutation ID of the mutation.
+    :type freqs: numpy.ndarray
+    :param dtype: The numpy.dtype to use.
+    :type dtype: TypeAlias
+    :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
+        genotype matrix. Default: False.
+    :type haploid: bool
+    :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
+        mutation_filter) instead of NxM. Default: empty filter.
+    :type mutation_filter: Union[List[int], numpy.typing.NDArray]
+    """
+
     def __init__(
         self,
         grg: pygrgl.GRG,
         freqs: numpy.typing.NDArray,
+        dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
-        dtype=numpy.float64,
+        mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
     ):
-        """
-        Construct a LinearOperator compatible with scipy's sparse linear algebra module.
-        Let X be the genotype matrix, as represented by the GRG, then this operator computes the product
-        (transpose(X)*X) * v, where v is a vector of length num_mutations.
-
-        :param grg: The GRG the operator will multiply against.
-        :type grg: pygrgl.GRG
-        :param freqs: A vector of length num_mutations, containing the allele frequency for all mutations.
-            Indexed by the mutation ID of the mutation.
-        :type freqs: numpy.ndarray
-        :param haploid: Set to True to perform haploid computations instead of the ploidy of the individuals
-            in the GRG.
-        :type haploid: bool
-        :param dtype: The numpy.dtype to use for the computation.
-        :type dtype: numpy.dtype
-        """
-        xtx_shape = (grg.num_mutations, grg.num_mutations)
+        num_muts = grg.num_mutations if not mutation_filter else len(mutation_filter)
+        xtx_shape = (num_muts, num_muts)
         super().__init__(dtype=dtype, shape=xtx_shape)
         self.std_x_op = SciPyStdXOperator(
-            grg, pygrgl.TraversalDirection.UP, freqs, haploid=haploid, dtype=dtype
+            grg,
+            _UP,
+            freqs,
+            haploid=haploid,
+            dtype=dtype,
+            mutation_filter=mutation_filter,
         )
 
     def _matmat(self, other_matrix):
@@ -309,9 +413,7 @@ class SciPyStdXXTOperator(LinearOperator):
         self.sample_count = grg.num_samples if haploid else grg.num_individuals
         xxt_shape = (self.sample_count, self.sample_count)
         super().__init__(dtype=dtype, shape=xxt_shape)
-        self.std_x_op = SciPyStdXOperator(
-            grg, pygrgl.TraversalDirection.UP, freqs, haploid=haploid, dtype=dtype
-        )
+        self.std_x_op = SciPyStdXOperator(grg, _UP, freqs, haploid=haploid, dtype=dtype)
 
     def _matmat(self, other_matrix):
         D = self.std_x_op._rmatmat(other_matrix)
@@ -447,7 +549,7 @@ class MultiSciPyStdXOperator(LinearOperator):
         assert len(grgs) >= 1, "Must provide at least one GRG"
         assert len(grgs) == len(freqs), "Must provide allele frequencies for every GRG"
         self.operators = [
-            SciPyStdXOperator(g, direction, f, haploid, dtype)
+            SciPyStdXOperator(g, direction, f, dtype, haploid=haploid)
             for f, g in zip(freqs, grgs)
         ]
         self.direction = direction
