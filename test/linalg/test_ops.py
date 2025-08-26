@@ -24,7 +24,7 @@ class TestLinearOperators(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.grg_filename = construct_grg("test-200-samples.vcf.gz", "test.linop.grg")
-        cls.grg = pygrgl.load_immutable_grg(cls.grg_filename)
+        cls.grg = pygrgl.load_immutable_grg(cls.grg_filename, load_up_edges=False)
 
         numpy.random.seed(42)
 

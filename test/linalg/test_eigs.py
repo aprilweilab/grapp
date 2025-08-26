@@ -24,10 +24,12 @@ class TestPCA(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.grg_filename = construct_grg("test-200-samples.vcf.gz", "test.pca.grg")
-        cls.grg = pygrgl.load_immutable_grg(cls.grg_filename)
+        # Up edges needed for grg2X
+        cls.grg = pygrgl.load_immutable_grg(cls.grg_filename, load_up_edges=False)
 
     def test_eigvals(self):
         X_stand = standardize_X(grg2X(self.grg, diploid=True))
+
         D = X_stand.T @ X_stand
         evals, evects = scipy_eigs(D, k=15)
         grg_evals, grg_evects = grg_eigs(MatrixSelection.XTX, self.grg, 15)
