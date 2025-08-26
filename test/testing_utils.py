@@ -33,26 +33,29 @@ def construct_grg(
     return output_file
 
 
+# It is important that this only uses down edges, so that we can test against
+# matmul methods which (should) only require down edges.
 def grg2X(grg: pygrgl.GRG, diploid: bool = False):
     samples = grg.num_individuals if diploid else grg.num_samples
-    ploidy = grg.ploidy
     result = numpy.zeros((samples, grg.num_mutations))
-    muts_above = {}
-    for node_id in reversed(range(grg.num_nodes)):
-        muts = grg.get_mutations_for_node(node_id)
-        ma = []
-        if muts:
-            ma.extend(muts)
-        for parent_id in grg.get_up_edges(node_id):
-            ma.extend(muts_above[parent_id])
-        muts_above[node_id] = ma
+    samps_below = [list() for _ in range(grg.num_nodes)]
+    for node_id in range(grg.num_nodes):
+        sb = []
         if grg.is_sample(node_id):
-            indiv = node_id // ploidy
-            for mut_id in muts_above[node_id]:
-                if diploid:
-                    result[indiv][mut_id] += 1
-                else:
-                    result[node_id][mut_id] = 1
+            sb.append(node_id)
+        for child_id in grg.get_down_edges(node_id):
+            sb.extend(samps_below[child_id])
+        samps_below[node_id] = sb
+
+        muts = grg.get_mutations_for_node(node_id)
+        if muts:
+            for sample_id in sb:
+                indiv = sample_id // grg.ploidy
+                for mut_id in muts:
+                    if diploid:
+                        result[indiv][mut_id] += 1
+                    else:
+                        result[sample_id][mut_id] = 1
     return result
 
 

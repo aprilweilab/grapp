@@ -61,7 +61,7 @@ class TestExactDistance(unittest.TestCase):
         igd_from_matrix(matrix, igd_filename)
         grg_file = construct_grg(igd_filename)
 
-        grg = pygrgl.load_immutable_grg(grg_file)
+        grg = pygrgl.load_immutable_grg(grg_file, load_up_edges=False)
         self.assertEqual(grg.num_samples, 5)
         self.assertEqual(grg.num_mutations, 12)
 
@@ -93,7 +93,7 @@ class TestExactDistance(unittest.TestCase):
         igd_from_matrix(matrix, igd_filename)
         grg_file = construct_grg(igd_filename)
 
-        grg = pygrgl.load_immutable_grg(grg_file)
+        grg = pygrgl.load_immutable_grg(grg_file, load_up_edges=False)
         self.assertEqual(grg.num_samples, 9)
         self.assertEqual(grg.num_mutations, 11)
 
@@ -117,7 +117,7 @@ class TestExactDistance(unittest.TestCase):
         igd_from_matrix(matrix, igd_filename)
         grg_file = construct_grg(igd_filename)
 
-        grg = pygrgl.load_immutable_grg(grg_file)
+        grg = pygrgl.load_immutable_grg(grg_file, load_up_edges=True)
         self.assertEqual(grg.num_samples, 5)
         self.assertEqual(grg.num_mutations, 12)
 

@@ -21,7 +21,7 @@ def _grg2igd(
     grg_or_file: Union[str, pygrgl.GRG], igd_prefix: str, batch_size: int
 ) -> str:
     if isinstance(grg_or_file, str):
-        grg = pygrgl.load_immutable_grg(grg_or_file)
+        grg = pygrgl.load_immutable_grg(grg_or_file, load_up_edges=False)
     else:
         grg = grg_or_file
     if igd_prefix.endswith(".igd"):
@@ -149,7 +149,7 @@ def export_igd(
 
     with _get_temp_dir_context(temp_dir)() as tmpdirname:
         if isinstance(grg_or_filename, str):
-            grg = pygrgl.load_immutable_grg(grg_or_filename)
+            grg = pygrgl.load_immutable_grg(grg_or_filename, load_up_edges=False)
             grg_filename = grg_or_filename
         else:
             grg = grg_or_filename
