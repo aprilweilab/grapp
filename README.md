@@ -9,9 +9,8 @@ compressing large datasets significantly, while also making calculations over th
 
 ## Installation
 
-Clone the repository, then run:
 ```
-pip install /path/to/grapp/
+pip install grapp
 ```
 
 ## Modules

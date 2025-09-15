@@ -19,24 +19,12 @@ class TestGWAS(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.grg_filename = construct_grg("test-200-samples.vcf.gz", "test.gwas.grg")
-        cls.grg = pygrgl.load_immutable_grg(cls.grg_filename)
+        cls.grg = pygrgl.load_immutable_grg(cls.grg_filename, load_up_edges=False)
         cls.pheno_path = os.path.join(INPUT_DIR, "phenotypes.txt")
         assert os.path.isfile(cls.pheno_path)
-        output = subprocess.check_output(
-            [
-                "grg",
-                "process",
-                "gwas",
-                cls.grg_filename,
-                "--phenotype",
-                cls.pheno_path,
-            ],
-            text=True,
-        )
-        cls.gwas = pd.read_csv(StringIO(output), delim_whitespace=True)
-        # Load GRG and data
-        cls.grg = pygrgl.load_immutable_grg(cls.grg_filename)
-
+        cls.baseline_path = os.path.join(INPUT_DIR, "gwas.baseline.txt")
+        with open(cls.baseline_path) as fin:
+            cls.gwas = pd.read_csv(fin, delim_whitespace=True)
         cls.Y = read_pheno(cls.pheno_path)
 
     def test_gwas_no_covar_vs_grg(self):

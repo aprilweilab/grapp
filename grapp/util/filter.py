@@ -30,7 +30,7 @@ def grg_save_individuals(
     :type allow_extra: bool
     """
     if isinstance(grg_or_filename, str):
-        grg = pygrgl.load_immutable_grg(grg_or_filename)
+        grg = pygrgl.load_immutable_grg(grg_or_filename, load_up_edges=True)
     else:
         grg = grg_or_filename
     sample_nodes = []
@@ -73,7 +73,7 @@ def grg_save_samples(
     :type sample_nodes: List[str]
     """
     if isinstance(grg_or_filename, str):
-        grg = pygrgl.load_immutable_grg(grg_or_filename)
+        grg = pygrgl.load_immutable_grg(grg_or_filename, load_up_edges=True)
     else:
         grg = grg_or_filename
     if not all(map(grg.is_sample, sample_nodes)):
@@ -107,7 +107,7 @@ def grg_save_range(
     :type bp_range: Tuple[int, int]
     """
     if isinstance(grg_or_filename, str):
-        grg = pygrgl.load_immutable_grg(grg_or_filename)
+        grg = pygrgl.load_immutable_grg(grg_or_filename, load_up_edges=False)
     else:
         grg = grg_or_filename
 

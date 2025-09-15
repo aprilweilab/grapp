@@ -27,7 +27,7 @@ def add_options(subparser):
 
 
 def run(args):
-    g = pygrgl.load_immutable_grg(args.grg_input)
+    g = pygrgl.load_immutable_grg(args.grg_input, load_up_edges=False)
     if args.phenotypes is None:
         y = numpy.random.standard_normal(g.num_individuals)
     else:
