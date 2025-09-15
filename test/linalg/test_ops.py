@@ -1,7 +1,9 @@
 from grapp.linalg.ops_scipy import (
-    SciPyStdXOperator,
     SciPyXOperator,
+    SciPyXTXOperator,
+    SciPyStdXOperator,
     SciPyStdXTXOperator,
+    GRGOperatorFilter,
 )
 from grapp.util import allele_frequencies
 import pygrgl
@@ -117,6 +119,96 @@ class TestLinearOperators(unittest.TestCase):
         self.assertFalse(numpy.any(numpy.isnan(grg_result)))
         self.assertFalse(numpy.any(numpy.isnan(numpy_result)))
         numpy.testing.assert_allclose(grg_result, numpy_result, atol=ABSOLUTE_TOLERANCE)
+
+    def test_filtering(self):
+        """
+        Test the operators with filters enabled.
+        """
+        keep_individuals = [1, 11, 13, 23, 45, 99]
+        keep_mutations = list(range(self.grg.num_mutations // 2))
+        test_filter = GRGOperatorFilter(
+            sample_filter=keep_individuals, mutation_filter=keep_mutations
+        )
+
+        K = 20  # Use 20 random vectors for test.
+        random_mutvals = numpy.random.standard_normal((K, len(keep_mutations))).T
+        random_sampvals = numpy.random.standard_normal((K, len(keep_individuals))).T
+
+        X = grg2X(self.grg, diploid=True)
+        X_std = standardize_X(X)
+        X_dip = X[keep_individuals, :][:, keep_mutations]
+        X_dip_std = X_std[keep_individuals, :][:, keep_mutations]
+        # Here we use the full dataset frequencies, hence we standardize X _first_ above, before filtering
+        # it. If we filtered first, we would need to compute the frequencies only on the subset of GRG.
+        freqs = allele_frequencies(self.grg)
+
+        ### Non-standardized X operator
+        # UP
+        numpy_dip_result = numpy.matmul(X_dip, random_mutvals)
+        grg_dip_op = SciPyXOperator(
+            self.grg, pygrgl.TraversalDirection.UP, filter=test_filter
+        )
+        grg_dip_result = grg_dip_op._matmat(random_mutvals)
+        numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
+        # DOWN
+        numpy_dip_result = numpy.matmul(X_dip.T, random_sampvals)
+        grg_dip_op = SciPyXOperator(
+            self.grg, pygrgl.TraversalDirection.DOWN, filter=test_filter
+        )
+        grg_dip_result = grg_dip_op._matmat(random_sampvals)
+        numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
+
+        ### Non-standardized XTX operator
+        numpy_dip_result = numpy.matmul(numpy.matmul(X_dip.T, X_dip), random_mutvals)
+        grg_dip_op = SciPyXTXOperator(self.grg, filter=test_filter)
+        grg_dip_result = grg_dip_op._matmat(random_mutvals)
+        numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
+
+        ### Standardized X operator
+        # UP
+        numpy_dip_result = numpy.matmul(X_dip_std, random_mutvals)
+        grg_op = SciPyStdXOperator(
+            self.grg, pygrgl.TraversalDirection.UP, freqs, filter=test_filter
+        )
+        grg_dip_result = grg_op._matmat(random_mutvals)
+        numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
+        # DOWN
+        numpy_dip_result = numpy.matmul(X_dip_std.T, random_sampvals)
+        grg_op = SciPyStdXOperator(
+            self.grg, pygrgl.TraversalDirection.DOWN, freqs, filter=test_filter
+        )
+        grg_dip_result = grg_op._matmat(random_sampvals)
+        numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
+
+        ###### Filter only mutations, keep all samples
+        test_filter = GRGOperatorFilter(mutation_filter=keep_mutations)
+        X_dip_std = X_std[:, keep_mutations]
+        numpy_dip_result = numpy.matmul(X_dip_std, random_mutvals)
+        grg_op = SciPyStdXOperator(
+            self.grg, pygrgl.TraversalDirection.UP, freqs, filter=test_filter
+        )
+        grg_dip_result = grg_op._matmat(random_mutvals)
+        numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
+        self.assertEqual(grg_dip_result.shape, (self.grg.num_individuals, K))
+
+    def test_mut_filter(self):
+        """
+        Test the operators with filters enabled.
+        """
+        keep_mutations = list(range(self.grg.num_mutations))
+        drop_mut = self.grg.num_mutations // 2
+        del keep_mutations[drop_mut]
+        test_filter = GRGOperatorFilter(mutation_filter=keep_mutations)
+
+        K = 20  # Use 20 random vectors for test.
+        random_mutvals = numpy.random.standard_normal((K, len(keep_mutations))).T
+
+        X = grg2X(self.grg, diploid=True)
+
+        ### Non-standardized XTX operator
+        grg_dip_op = SciPyXTXOperator(self.grg, filter=test_filter)
+        grg_dip_result = grg_dip_op._matmat(random_mutvals)
+        self.assertEqual(grg_dip_op.shape[0], grg_dip_result.shape[0])
 
     @classmethod
     def tearDownClass(cls):
