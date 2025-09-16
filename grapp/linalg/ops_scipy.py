@@ -3,11 +3,15 @@ Linear operators that are compatible with scipy.
 """
 
 from scipy.sparse.linalg import LinearOperator
-from typing import Tuple
+from typing import Tuple, Union, List
 import numpy
 import pygrgl
 
-
+try:
+    from typing import TypeAlias
+except ImportError:
+    from typing_extensions import TypeAlias
+    
 def _flip_dir(direction: pygrgl.TraversalDirection) -> pygrgl.TraversalDirection:
     return (
         pygrgl.TraversalDirection.UP
@@ -267,3 +271,61 @@ class SciPyStdXTXOperator(LinearOperator):
     def _rmatvec(self, vect):
         vect = numpy.array([vect]).T  # Column vector (Nx1)
         return self._rmatmat(vect)
+
+# Genetic relatedness matrix X*X^T operator on the standardized GRG
+class SciPyStdXXTOperator(LinearOperator):
+    """
+    A scipy.sparse.linalg.LinearOperator on the matrix :math:`XX^T` represented by the GRG.
+    This is for the standardized matrix, which is centered to the mean (based on allele
+    frequencies) and standard devation (based on the binomial distribution where each individual
+    is the result of :math:`p`, the ploidy, trials).
+
+    This operator performs multiplications against the correlation matrix of the genotype matrix
+    underlying the GRG. Can perform the operation :math:`X \\times X^T \\times A` (_matmat) or
+    :math:`X \\times X^T \\times \overrightarrow{v}` (_matvec).
+
+    :param grg: The GRG the operator will multiply against.
+    :type grg: pygrgl.GRG
+    :param freqs: A vector of length num_mutations, containing the allele frequency for all mutations.
+        Indexed by the mutation ID of the mutation.
+    :type freqs: numpy.ndarray
+    :param dtype: The numpy.dtype to use.
+    :type dtype: TypeAlias
+    :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
+        genotype matrix. Default: False.
+    :type haploid: bool
+    :param filter: Changes the dimensions of :math:`X` to match the provided filter, which can ignore both mutations
+        and samples/individuals when performing the matrix operations. Default: empty filter.
+    :type filter: GRGOperatorFilter
+    """
+
+    def __init__(
+        self,
+        grg: pygrgl.GRG,
+        freqs: numpy.typing.NDArray,
+        dtype: TypeAlias = numpy.float64,
+        haploid: bool = False,
+        filter: GRGOperatorFilter = GRGOperatorFilter(),
+    ):
+        self.sample_count = grg.num_samples if haploid else grg.num_individuals
+        xxt_shape = (self.sample_count, self.sample_count)
+        super().__init__(dtype=dtype, shape=xxt_shape)
+        self.std_x_op = SciPyStdXOperator(
+            grg, _UP, freqs, haploid=haploid, dtype=dtype, filter=filter
+        )
+
+    def _matmat(self, other_matrix):
+        D = self.std_x_op._rmatmat(other_matrix)
+        return self.std_x_op._matmat(D)
+
+    def _rmatmat(self, other_matrix):
+        return self._matmat(other_matrix)
+
+    def _matvec(self, vect):
+        vect = numpy.array([vect]).T  # Column vector (Nx1)
+        return self._matmat(vect)
+
+    def _rmatvec(self, vect):
+        vect = numpy.array([vect]).T  # Column vector (Nx1)
+        return self._rmatmat(vect)
+
