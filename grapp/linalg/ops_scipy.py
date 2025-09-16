@@ -11,13 +11,15 @@ try:
     from typing import TypeAlias
 except ImportError:
     from typing_extensions import TypeAlias
-    
+
+
 def _flip_dir(direction: pygrgl.TraversalDirection) -> pygrgl.TraversalDirection:
     return (
         pygrgl.TraversalDirection.UP
         if direction == pygrgl.TraversalDirection.DOWN
         else pygrgl.TraversalDirection.DOWN
     )
+
 
 class SciPyXOperator(LinearOperator):
     def __init__(
@@ -271,6 +273,7 @@ class SciPyStdXTXOperator(LinearOperator):
         vect = numpy.array([vect]).T  # Column vector (Nx1)
         return self._rmatmat(vect)
 
+
 # Genetic relatedness matrix X*X^T operator on the standardized GRG
 class SciPyStdXXTOperator(LinearOperator):
     """
@@ -293,9 +296,6 @@ class SciPyStdXXTOperator(LinearOperator):
     :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
         genotype matrix. Default: False.
     :type haploid: bool
-    :param filter: Changes the dimensions of :math:`X` to match the provided filter, which can ignore both mutations
-        and samples/individuals when performing the matrix operations. Default: empty filter.
-    :type filter: GRGOperatorFilter
     """
 
     def __init__(
@@ -304,13 +304,12 @@ class SciPyStdXXTOperator(LinearOperator):
         freqs: numpy.typing.NDArray,
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
-        filter: GRGOperatorFilter = GRGOperatorFilter(),
     ):
         self.sample_count = grg.num_samples if haploid else grg.num_individuals
         xxt_shape = (self.sample_count, self.sample_count)
         super().__init__(dtype=dtype, shape=xxt_shape)
         self.std_x_op = SciPyStdXOperator(
-            grg, pygrgl.TraversalDirection.UP, freqs, haploid=haploid, dtype=dtype, filter=filter
+            grg, pygrgl.TraversalDirection.UP, freqs, haploid=haploid, dtype=dtype
         )
 
     def _matmat(self, other_matrix):
@@ -327,4 +326,3 @@ class SciPyStdXXTOperator(LinearOperator):
     def _rmatvec(self, vect):
         vect = numpy.array([vect]).T  # Column vector (Nx1)
         return self._rmatmat(vect)
-
