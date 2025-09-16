@@ -3,7 +3,7 @@ Linear operators that are compatible with scipy.
 """
 
 from scipy.sparse.linalg import LinearOperator
-from typing import Tuple, Union, List
+from typing import Tuple
 import numpy
 import pygrgl
 
