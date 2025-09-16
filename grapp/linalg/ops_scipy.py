@@ -19,7 +19,6 @@ def _flip_dir(direction: pygrgl.TraversalDirection) -> pygrgl.TraversalDirection
         else pygrgl.TraversalDirection.DOWN
     )
 
-
 class SciPyXOperator(LinearOperator):
     def __init__(
         self,
@@ -311,7 +310,7 @@ class SciPyStdXXTOperator(LinearOperator):
         xxt_shape = (self.sample_count, self.sample_count)
         super().__init__(dtype=dtype, shape=xxt_shape)
         self.std_x_op = SciPyStdXOperator(
-            grg, _UP, freqs, haploid=haploid, dtype=dtype, filter=filter
+            grg, pygrgl.TraversalDirection.UP, freqs, haploid=haploid, dtype=dtype, filter=filter
         )
 
     def _matmat(self, other_matrix):
