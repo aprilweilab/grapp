@@ -8,9 +8,9 @@ import numpy
 import pygrgl
 
 try:
-    from typing import TypeAlias
+    from typing import TypeAlias  # type: ignore
 except ImportError:
-    from typing_extensions import TypeAlias
+    from typing_extensions import TypeAlias  # type: ignore
 
 
 def _flip_dir(direction: pygrgl.TraversalDirection) -> pygrgl.TraversalDirection:
