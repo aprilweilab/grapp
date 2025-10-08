@@ -1,5 +1,5 @@
 numpy
 pandas
-pygrgl>=2.2
+pygrgl>=2.3
 pyigd>=1.3
 scipy
