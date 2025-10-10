@@ -45,19 +45,26 @@ def allele_frequencies(
         indexed by MutationID.
     :rtype: numpy.ndarray
     """
-    kwargs = {}
-    miss: Optional[Union[numpy.typing.NDArray, int]] = 0
-    if adjust_missing:
-        miss = numpy.zeros(grg.num_mutations, dtype=numpy.int32)
-        kwargs["miss"] = miss
-    else:
-        miss = None
-    counts = pygrgl.matmul(
-        grg,
-        numpy.ones((1, grg.num_samples), dtype=numpy.int32),
-        pygrgl.TraversalDirection.UP,
-        **kwargs,
-    )[0]
-    if miss is None:
-        miss = 0
-    return counts / (grg.num_samples - miss)
+    with numpy.errstate(divide="raise"):
+        kwargs = {}
+        miss: Optional[Union[numpy.typing.NDArray, int]] = 0
+        if adjust_missing:
+            miss = numpy.zeros(grg.num_mutations, dtype=numpy.int32)
+            kwargs["miss"] = miss
+        else:
+            miss = None
+        counts = pygrgl.matmul(
+            grg,
+            numpy.ones((1, grg.num_samples), dtype=numpy.int32),
+            pygrgl.TraversalDirection.UP,
+            **kwargs,
+        )[0]
+        if miss is None:
+            miss = 0
+        denominator = grg.num_samples - miss
+        return numpy.divide(
+            counts,
+            denominator,
+            out=numpy.zeros(counts.shape, dtype=numpy.float64),
+            where=(denominator != 0),
+        )
