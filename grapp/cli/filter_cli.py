@@ -3,10 +3,15 @@ import os
 
 from grapp.util.filter import (
     grg_save_individuals,
-    grg_save_range,
+    grg_save_mut_filter,
     grg_save_samples,
 )
-from grapp.util.simple import UserInputError
+from grapp.util.simple import (
+    UserInputError,
+    allele_counts,
+    allele_frequencies,
+)
+import pygrgl
 
 
 def list_or_filename(arg_value):
@@ -39,7 +44,8 @@ def genome_range(arg_value):
 def add_options(subparser: argparse.ArgumentParser):
     subparser.add_argument("grg_input", help="The input GRG file")
     subparser.add_argument("grg_output", help="The output GRG file")
-    filters = subparser.add_mutually_exclusive_group(required=True)
+    sample_group = subparser.add_argument_group("sample filters")
+    filters = sample_group.add_mutually_exclusive_group()
     # TODO: update the pygrgl APIs to take a filename _or_ a file object, so that we can do stdout piping
     filters.add_argument(
         "-S",
@@ -52,24 +58,101 @@ def add_options(subparser: argparse.ArgumentParser):
         type=int_list_or_filename,
         help="Keep only the haploid samples with the NodeIDs (indexes) given as a comma-separated list or in the given filename.",
     )
-    filters.add_argument(
+    # You can specify many different filters on mutations simultaneously, but (above) you cannot specify both
+    # mutation and sample based filters.
+    mutation_group = subparser.add_argument_group("mutation filters")
+    mutation_group.add_argument(
         "-r",
         "--range",
         type=genome_range,
         help='Keep only the variants within the given range, in base pairs. Example: "lower-upper", where both are integers '
         "and lower is inclusive, upper is exclusive.",
     )
+    mutation_group.add_argument(
+        "-c",
+        "--min-ac",
+        type=int,
+        help="Minimum allele count to keep. All Mutations with count below this value will be dropped",
+    )
+    mutation_group.add_argument(
+        "-C",
+        "--max-ac",
+        type=int,
+        help="Maximum allele count to keep. All Mutations with count above this value will be dropped",
+    )
+    mutation_group.add_argument(
+        "-q",
+        "--min-af",
+        type=float,
+        help="Minimum allele frequency to keep. All Mutations with frequency below this value will be dropped",
+    )
+    mutation_group.add_argument(
+        "-Q",
+        "--max-af",
+        type=float,
+        help="Maximum allele frequency to keep. All Mutations with frequency above this value will be dropped",
+    )
+
+
+def require_unspecified(args, msg, *params):
+    for argname in params:
+        if getattr(args, argname) is not None:
+            raise RuntimeError(msg)
 
 
 def run(args):
     if args.individuals:
+        require_unspecified(
+            args,
+            "Cannot mix sample and mutation filters",
+            "range",
+            "min_ac",
+            "max_ac",
+            "min_af",
+            "max_af",
+        )
         grg_save_individuals(args.grg_input, args.grg_output, args.individuals)
     elif args.hap_samples:
+        require_unspecified(
+            args,
+            "Cannot mix sample and mutation filters",
+            "range",
+            "min_ac",
+            "max_ac",
+            "min_af",
+            "max_af",
+        )
         grg_save_samples(args.grg_input, args.grg_output, args.hap_samples)
-    elif args.range:
-        grg_save_range(args.grg_input, args.grg_output, args.range)
     else:
-        assert False, "Unreachable"
+        if args.range is None:
+            brange = (0, 0)
+        else:
+            brange = args.range
+        grg = pygrgl.load_immutable_grg(args.grg_input, load_up_edges=False)
+        counts = None
+        freqs = None
+        if args.min_ac is not None or args.max_ac is not None:
+            counts = allele_counts(grg)
+        if args.min_af is not None or args.max_af is not None:
+            freqs = allele_frequencies(grg)
+
+        def filter_method(grg: pygrgl.GRG, mut_id: int):
+            mut = grg.get_mutation_by_id(mut_id)
+            if args.range is not None and not (
+                mut.position >= brange[0] and mut.position < brange[1]
+            ):
+                return False
+            if args.min_ac is not None and counts[mut_id] < args.min_ac:
+                return False
+            if args.max_ac is not None and counts[mut_id] > args.max_ac:
+                return False
+            if args.min_af is not None and freqs[mut_id] < args.min_af:
+                return False
+            if args.max_af is not None and freqs[mut_id] > args.max_af:
+                return False
+            return True
+
+        grg_save_mut_filter(args.grg_input, args.grg_output, filter_method, brange)
 
 
 if __name__ == "__main__":

@@ -11,6 +11,25 @@ class UserInputError(Exception):
     pass
 
 
+def allele_counts(
+    grg: pygrgl.GRG, adjust_missing: bool = False
+) -> numpy.typing.NDArray:
+    """
+    Get the allele counts for the mutations in the given GRG.
+
+    :param grg: The GRG.
+    :type grg: pygrgl.GRG
+    :return: A vector of length grg.num_mutations, containing allele counts
+        indexed by MutationID.
+    :rtype: numpy.ndarray
+    """
+    return pygrgl.matmul(
+        grg,
+        numpy.ones((1, grg.num_samples), dtype=numpy.int32),
+        pygrgl.TraversalDirection.UP,
+    )[0]
+
+
 def allele_frequencies(
     grg: pygrgl.GRG, adjust_missing: bool = False
 ) -> numpy.typing.NDArray:

@@ -3,11 +3,11 @@ Functions for filtering data out of a GRG to create a new, smaller GRG.
 """
 
 from multiprocessing import Pool
-from typing import List, Tuple, Optional, Union
+from typing import List, Tuple, Optional, Union, Callable
 import pygrgl
 import os
 
-from grapp.util.simple import UserInputError
+from grapp.util.simple import UserInputError, allele_frequencies
 
 
 def grg_save_individuals(
@@ -106,16 +106,67 @@ def grg_save_range(
         and upper is exclusive.
     :type bp_range: Tuple[int, int]
     """
+
+    def keep_mut(grg: pygrgl.GRG, mut_id: int):
+        position = grg.get_mutation_by_id(mut_id).position
+        return position >= bp_range[0] and position < bp_range[1]
+
+    return grg_save_mut_filter(grg_or_filename, out_filename, keep_mut, bp_range)
+
+
+def grg_save_freq(
+    grg_or_filename: Union[pygrgl.GRG, str],
+    out_filename: str,
+    freq_range: Tuple[float, float],
+):
+    """
+    Given a GRG filename or object, save a new GRG that contains only the Mutations in
+    the given frequency range.
+
+    :param grg_or_filename: Either a pygrgl.GRG object, or the filename of a GRG.
+    :type grg_or_filename: Union[pygrgl.GRG, str]
+    :param out_filename: The filename of the to-be-created GRG.
+    :type out_filename: str
+    :param freq_range: A pair (lower, upper), where the Mutations will be kept if
+        lower <= frequency(Mutation) < upper. I.e., lower is inclusive and upper is exclusive.
+    :type freq_range: Tuple[float, float]
+    """
+
+    freqs = None
+
+    def keep_mut(grg: pygrgl.GRG, mut_id: int):
+        nonlocal freqs
+        if freqs is None:
+            freqs = allele_frequencies(grg)
+        return freqs[mut_id] >= freq_range[0] and freqs[mut_id] < freq_range[1]
+
+    return grg_save_mut_filter(grg_or_filename, out_filename, keep_mut)
+
+
+def grg_save_mut_filter(
+    grg_or_filename: Union[pygrgl.GRG, str],
+    out_filename: str,
+    mut_filter: Callable[[pygrgl.GRG, int], bool],
+    bp_range: Tuple[int, int] = (0, 0),
+):
+    """
+    Given a GRG filename or object, save a new GRG that contains only the Mutations selected
+    by the given filter function.
+
+    :param grg_or_filename: Either a pygrgl.GRG object, or the filename of a GRG.
+    :type grg_or_filename: Union[pygrgl.GRG, str]
+    :param out_filename: The filename of the to-be-created GRG.
+    :type out_filename: str
+    :param mut_filter: Callback (function) that takes a MutationID (int) as input and returns
+        true if that mutation should be kept.
+    :type mut_filter: Callable[[pygrgl.GRG, int], bool]
+    """
     if isinstance(grg_or_filename, str):
         grg = pygrgl.load_immutable_grg(grg_or_filename, load_up_edges=False)
     else:
         grg = grg_or_filename
 
-    def keep_mut(mut_id):
-        position = grg.get_mutation_by_id(mut_id).position
-        return position >= bp_range[0] and position < bp_range[1]
-
-    seeds = list(filter(keep_mut, range(grg.num_mutations)))
+    seeds = list(filter(lambda m: mut_filter(grg, m), range(grg.num_mutations)))
     if not seeds:
         raise UserInputError(
             "No Mutations found matching range; cannot filter to an empty GRG."
