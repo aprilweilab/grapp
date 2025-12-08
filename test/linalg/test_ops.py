@@ -236,6 +236,53 @@ class TestLinearOperators(unittest.TestCase):
             full_dip_result, split_dip_result, atol=ABSOLUTE_TOLERANCE
         )
 
+        ### Test with a contiguous mutation filter
+        total_muts = sum([g.num_mutations for g in grgs])
+        keep_mutations = list(range(total_muts // 2))
+        random_input = numpy.random.standard_normal((K, len(keep_mutations))).T
+        grg_op = SciPyXOperator(
+            self.grg,
+            pygrgl.TraversalDirection.UP,
+            haploid=False,
+            mutation_filter=keep_mutations,
+        )
+        full_dip_result = grg_op._matmat(random_input)
+        multi_op = MultiSciPyXOperator(
+            grgs,
+            pygrgl.TraversalDirection.UP,
+            haploid=False,
+            mutation_filter=keep_mutations,
+            threads=JOBS,
+        )
+        split_dip_result = multi_op._matmat(random_input)
+        numpy.testing.assert_allclose(full_dip_result, split_dip_result)
+
+        ### Test with a scattered mutation filter
+        total_muts = sum([g.num_mutations for g in grgs])
+        keep_mutations = [i * 2 for i in range(total_muts // 2)]
+        random_input = numpy.random.standard_normal((K, len(keep_mutations))).T
+        freqs = allele_frequencies(self.grg)
+        freq_list = list(map(allele_frequencies, grgs))
+
+        grg_op = SciPyStdXOperator(
+            self.grg,
+            pygrgl.TraversalDirection.UP,
+            freqs,
+            haploid=False,
+            mutation_filter=keep_mutations,
+        )
+        full_dip_result = grg_op._matmat(random_input)
+        multi_op = MultiSciPyStdXOperator(
+            grgs,
+            pygrgl.TraversalDirection.UP,
+            freq_list,
+            haploid=False,
+            mutation_filter=keep_mutations,
+            threads=JOBS,
+        )
+        split_dip_result = multi_op._matmat(random_input)
+        numpy.testing.assert_allclose(full_dip_result, split_dip_result)
+
     def test_filtering(self):
         """
         Test the operators with filters enabled.

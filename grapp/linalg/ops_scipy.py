@@ -432,25 +432,78 @@ class SciPyStdXXTOperator(LinearOperator):
 
 
 class MultiSciPyXOperator(LinearOperator):
+    """
+    A scipy.sparse.linalg.LinearOperator on multiple GRGs. Same as SciPyXOperator, except if the input
+    GRGs have mutation counts M1, M2, ..., MK, then the dimension of the implicit underlying genotype
+    matrix is Nx(M1 + M2 + ... + MK).
+
+    :param grgs: The GRGs the operator will multiply against. They must all have the same samples,
+        and the mutations are expected to differ (e.g., one GRG per chromosome of the same dataset).
+    :type grgs: List[pygrgl.GRG]
+    :param direction: Determines whether the matrix is :math:`X` (pygrgl.TraversalDirection.UP) or
+        :math:`X^T` (pygrgl.TraversalDirection.DOWN).
+    :type direction: pygrgl.TraversalDirection
+    :param dtype: The numpy.dtype to use.
+    :type dtype: TypeAlias
+    :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
+        genotype matrix. Default: False.
+    :type haploid: bool
+    :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
+        mutation_filter) instead of NxM. Default: empty filter.
+    :type mutation_filter: Union[List[int], numpy.typing.NDArray]
+    :param threads: Number of threads for performing the multiplication. Each GRG can be done in
+        parallel.
+    :type threads: int
+    """
+
     def __init__(
         self,
         grgs: List[pygrgl.GRG],
         direction: pygrgl.TraversalDirection,
         dtype=numpy.float64,
         haploid: bool = False,
+        mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
         threads: int = 1,
     ):
-        """
-        Operator that can take multiple GRGs (e.g., one for each chromosome) and perform a single operation
-        on all of them. We always assumes that the GRGs have the same sample set, but different mutation sets.
-        """
         assert len(grgs) >= 1, "Must provide at least one GRG"
-        self.operators = [SciPyXOperator(g, direction, dtype, haploid) for g in grgs]
         self.direction = direction
         self.num_mutations = sum([g.num_mutations for g in grgs])
+        self.mutation_filter = mutation_filter
+        if self.mutation_filter:
+            assert len(self.mutation_filter) <= self.num_mutations
+            self.num_mutations = len(self.mutation_filter)
+        self.operators = []
         num_samples = grgs[0].num_samples
-        for g in grgs[1:]:
+        prev_max_mut = 0
+        for g in grgs:
             assert g.num_samples == num_samples, "All GRGs must use the same samples"
+            if self.mutation_filter:
+                grg_mut_filt = list(
+                    map(
+                        lambda m: m - prev_max_mut,
+                        filter(
+                            lambda m: m >= prev_max_mut
+                            and m < prev_max_mut + g.num_mutations,
+                            self.mutation_filter,
+                        ),
+                    )
+                )
+                # If we have an overall filter, but no filter for _this_ GRG, then we just skip it.
+                skip = len(grg_mut_filt) == 0
+            else:
+                grg_mut_filt = []
+                skip = False
+            if not skip:
+                self.operators.append(
+                    SciPyXOperator(
+                        g,
+                        direction,
+                        dtype,
+                        haploid=haploid,
+                        mutation_filter=grg_mut_filt,
+                    )
+                )
+            prev_max_mut += g.num_mutations
         # Should we concatenate the result for _matmat, or add them together?
         self.concat = self.direction == pygrgl.TraversalDirection.DOWN
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
@@ -499,11 +552,33 @@ class MultiSciPyXOperator(LinearOperator):
 
 
 class MultiSciPyXTXOperator(LinearOperator):
+    """
+    A scipy.sparse.linalg.LinearOperator on multiple GRGs. Same as SciPyXTXOperator, except if the input
+    GRGs have mutation counts M1, M2, ..., MK, then the dimension of the implicit underlying genotype
+    matrix is Nx(M1 + M2 + ... + MK).
+
+    :param grgs: The GRGs the operator will multiply against. They must all have the same samples,
+        and the mutations are expected to differ (e.g., one GRG per chromosome of the same dataset).
+    :type grgs: List[pygrgl.GRG]
+    :param dtype: The numpy.dtype to use.
+    :type dtype: TypeAlias
+    :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
+        genotype matrix. Default: False.
+    :type haploid: bool
+    :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
+        mutation_filter) instead of NxM. Default: empty filter.
+    :type mutation_filter: Union[List[int], numpy.typing.NDArray]
+    :param threads: Number of threads for performing the multiplication. Each GRG can be done in
+        parallel.
+    :type threads: int
+    """
+
     def __init__(
         self,
         grgs: List[pygrgl.GRG],
         dtype=numpy.float64,
         haploid: bool = False,
+        mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
         threads: int = 1,
     ):
         self.x_op = MultiSciPyXOperator(
@@ -511,6 +586,7 @@ class MultiSciPyXTXOperator(LinearOperator):
             pygrgl.TraversalDirection.UP,
             dtype=dtype,
             haploid=haploid,
+            mutation_filter=mutation_filter,
             threads=threads,
         )
         xtx_shape = (self.x_op.num_mutations, self.x_op.num_mutations)
@@ -533,6 +609,30 @@ class MultiSciPyXTXOperator(LinearOperator):
 
 # FIXME this can be factored into a common base class with MultiSciPyXOperator
 class MultiSciPyStdXOperator(LinearOperator):
+    """
+    A scipy.sparse.linalg.LinearOperator on multiple GRGs. Same as SciPyStdXOperator, except if the input
+    GRGs have mutation counts M1, M2, ..., MK, then the dimension of the implicit underlying genotype
+    matrix is Nx(M1 + M2 + ... + MK).
+
+    :param grgs: The GRGs the operator will multiply against. They must all have the same samples,
+        and the mutations are expected to differ (e.g., one GRG per chromosome of the same dataset).
+    :type grgs: List[pygrgl.GRG]
+    :param direction: Determines whether the matrix is :math:`X` (pygrgl.TraversalDirection.UP) or
+        :math:`X^T` (pygrgl.TraversalDirection.DOWN).
+    :type direction: pygrgl.TraversalDirection
+    :param dtype: The numpy.dtype to use.
+    :type dtype: TypeAlias
+    :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
+        genotype matrix. Default: False.
+    :type haploid: bool
+    :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
+        mutation_filter) instead of NxM. Default: empty filter.
+    :type mutation_filter: Union[List[int], numpy.typing.NDArray]
+    :param threads: Number of threads for performing the multiplication. Each GRG can be done in
+        parallel.
+    :type threads: int
+    """
+
     def __init__(
         self,
         grgs: List[pygrgl.GRG],
@@ -540,23 +640,50 @@ class MultiSciPyStdXOperator(LinearOperator):
         freqs: List[numpy.typing.NDArray],
         haploid: bool = False,
         dtype=numpy.float64,
+        mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
         threads: int = 1,
     ):
-        """
-        Operator that can take multiple GRGs (e.g., one for each chromosome) and perform a single operation
-        on all of them. We always assumes that the GRGs have the same sample set, but different mutation sets.
-        """
         assert len(grgs) >= 1, "Must provide at least one GRG"
         assert len(grgs) == len(freqs), "Must provide allele frequencies for every GRG"
-        self.operators = [
-            SciPyStdXOperator(g, direction, f, dtype, haploid=haploid)
-            for f, g in zip(freqs, grgs)
-        ]
         self.direction = direction
         self.num_mutations = sum([g.num_mutations for g in grgs])
         num_samples = grgs[0].num_samples
-        for g in grgs[1:]:
+        self.mutation_filter = mutation_filter
+        if self.mutation_filter:
+            assert len(self.mutation_filter) <= self.num_mutations
+            self.num_mutations = len(self.mutation_filter)
+        prev_max_mut = 0
+        self.operators = []
+        for g, f in zip(grgs, freqs):
             assert g.num_samples == num_samples, "All GRGs must use the same samples"
+            if self.mutation_filter:
+                grg_mut_filt = list(
+                    map(
+                        lambda m: m - prev_max_mut,
+                        filter(
+                            lambda m: m >= prev_max_mut
+                            and m < prev_max_mut + g.num_mutations,
+                            self.mutation_filter,
+                        ),
+                    )
+                )
+                # If we have an overall filter, but no filter for _this_ GRG, then we just skip it.
+                skip = len(grg_mut_filt) == 0
+            else:
+                grg_mut_filt = []
+                skip = False
+            if not skip:
+                self.operators.append(
+                    SciPyStdXOperator(
+                        g,
+                        direction,
+                        f,
+                        dtype,
+                        haploid=haploid,
+                        mutation_filter=grg_mut_filt,
+                    )
+                )
+            prev_max_mut += g.num_mutations
         # Should we concatenate the result for _matmat, or add them together?
         self.concat = self.direction == pygrgl.TraversalDirection.DOWN
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
@@ -607,12 +734,34 @@ class MultiSciPyStdXOperator(LinearOperator):
 
 
 class MultiSciPyStdXTXOperator(LinearOperator):
+    """
+    A scipy.sparse.linalg.LinearOperator on multiple GRGs. Same as SciPyStdXTXOperator, except if the input
+    GRGs have mutation counts M1, M2, ..., MK, then the dimension of the implicit underlying genotype
+    matrix is Nx(M1 + M2 + ... + MK).
+
+    :param grgs: The GRGs the operator will multiply against. They must all have the same samples,
+        and the mutations are expected to differ (e.g., one GRG per chromosome of the same dataset).
+    :type grgs: List[pygrgl.GRG]
+    :param dtype: The numpy.dtype to use.
+    :type dtype: TypeAlias
+    :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
+        genotype matrix. Default: False.
+    :type haploid: bool
+    :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
+        mutation_filter) instead of NxM. Default: empty filter.
+    :type mutation_filter: Union[List[int], numpy.typing.NDArray]
+    :param threads: Number of threads for performing the multiplication. Each GRG can be done in
+        parallel.
+    :type threads: int
+    """
+
     def __init__(
         self,
         grgs: List[pygrgl.GRG],
         freqs: List[numpy.typing.NDArray],
         haploid: bool = False,
         dtype=numpy.float64,
+        mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
         threads: int = 1,
     ):
         self.std_x_op = MultiSciPyStdXOperator(
@@ -621,6 +770,7 @@ class MultiSciPyStdXTXOperator(LinearOperator):
             freqs,
             haploid=haploid,
             dtype=dtype,
+            mutation_filter=mutation_filter,
             threads=threads,
         )
         xtx_shape = (self.std_x_op.num_mutations, self.std_x_op.num_mutations)
