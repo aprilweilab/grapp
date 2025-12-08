@@ -3,7 +3,8 @@ Linear operators that are compatible with scipy.
 """
 
 from scipy.sparse.linalg import LinearOperator
-from typing import Tuple
+from typing import Tuple, List
+import concurrent.futures
 import numpy
 import pygrgl
 
@@ -326,3 +327,213 @@ class SciPyStdXXTOperator(LinearOperator):
     def _rmatvec(self, vect):
         vect = numpy.array([vect]).T  # Column vector (Nx1)
         return self._rmatmat(vect)
+
+
+class MultiSciPyXOperator(LinearOperator):
+    def __init__(
+        self,
+        grgs: List[pygrgl.GRG],
+        direction: pygrgl.TraversalDirection,
+        dtype=numpy.float64,
+        haploid: bool = False,
+        threads: int = 1,
+    ):
+        """
+        Operator that can take multiple GRGs (e.g., one for each chromosome) and perform a single operation
+        on all of them. We always assumes that the GRGs have the same sample set, but different mutation sets.
+        """
+        assert len(grgs) >= 1, "Must provide at least one GRG"
+        self.operators = [SciPyXOperator(g, direction, dtype, haploid) for g in grgs]
+        self.direction = direction
+        self.num_mutations = sum([g.num_mutations for g in grgs])
+        num_samples = grgs[0].num_samples
+        for g in grgs[1:]:
+            assert g.num_samples == num_samples, "All GRGs must use the same samples"
+        # Should we concatenate the result for _matmat, or add them together?
+        self.concat = self.direction == pygrgl.TraversalDirection.DOWN
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
+
+    def _matmat_helper(self, other_matrix, direction, op_method):
+        # For UP, we have "(N x M) x (M x k)", so we need to split the other_matrix into chunks of the
+        # appropriate size <= M.
+        futures = []
+        if direction == pygrgl.TraversalDirection.UP:
+            start = 0
+            for op in self.operators:
+                end = start + op.shape[1]
+                assert end <= other_matrix.shape[0]
+                sub_matrix = other_matrix[start:end, :]
+                futures.append(self.executor.submit(op_method, op, sub_matrix))
+                start = end
+            result = None
+            for future in futures:
+                if result is None:
+                    result = future.result()
+                else:
+                    result += future.result()
+            return result
+        # For DOWN, we have "(M x N) x (N x k)", so it is much simpler (no splitting)
+        else:
+            for op in self.operators:
+                futures.append(self.executor.submit(op_method, op, other_matrix))
+            result = [f.result() for f in futures]
+            return numpy.concatenate(result)
+
+    def _matmat(self, other_matrix):
+        return self._matmat_helper(other_matrix, self.direction, SciPyXOperator._matmat)
+
+    def _rmatmat(self, other_matrix):
+        return self._matmat_helper(
+            other_matrix, _flip_dir(self.direction), SciPyXOperator._rmatmat
+        )
+
+    def _matvec(self, vect):
+        vect = numpy.array([vect]).T
+        return self._matmat(vect)
+
+    def _rmatvec(self, vect):
+        vect = numpy.array([vect]).T
+        return self._rmatmat(vect)
+
+
+class MultiSciPyXTXOperator(LinearOperator):
+    def __init__(
+        self,
+        grgs: List[pygrgl.GRG],
+        dtype=numpy.float64,
+        haploid: bool = False,
+        threads: int = 1,
+    ):
+        self.x_op = MultiSciPyXOperator(
+            grgs,
+            pygrgl.TraversalDirection.UP,
+            dtype=dtype,
+            haploid=haploid,
+            threads=threads,
+        )
+        xtx_shape = (self.x_op.num_mutations, self.x_op.num_mutations)
+        super().__init__(dtype=dtype, shape=xtx_shape)
+
+    def _matmat(self, other_matrix):
+        D = self.x_op._matmat(other_matrix)
+        return self.x_op._rmatmat(D)
+
+    def _rmatmat(self, other_matrix):
+        return self._matmat(other_matrix)
+
+    def _matvec(self, vect):
+        vect = numpy.array([vect]).T
+        return self._matmat(vect)
+
+    def _rmatvec(self, vect):
+        return self._matvec(vect)
+
+
+# FIXME this can be factored into a common base class with MultiSciPyXOperator
+class MultiSciPyStdXOperator(LinearOperator):
+    def __init__(
+        self,
+        grgs: List[pygrgl.GRG],
+        direction: pygrgl.TraversalDirection,
+        freqs: List[numpy.typing.NDArray],
+        haploid: bool = False,
+        dtype=numpy.float64,
+        threads: int = 1,
+    ):
+        """
+        Operator that can take multiple GRGs (e.g., one for each chromosome) and perform a single operation
+        on all of them. We always assumes that the GRGs have the same sample set, but different mutation sets.
+        """
+        assert len(grgs) >= 1, "Must provide at least one GRG"
+        assert len(grgs) == len(freqs), "Must provide allele frequencies for every GRG"
+        self.operators = [
+            SciPyStdXOperator(g, direction, f, haploid, dtype)
+            for f, g in zip(freqs, grgs)
+        ]
+        self.direction = direction
+        self.num_mutations = sum([g.num_mutations for g in grgs])
+        num_samples = grgs[0].num_samples
+        for g in grgs[1:]:
+            assert g.num_samples == num_samples, "All GRGs must use the same samples"
+        # Should we concatenate the result for _matmat, or add them together?
+        self.concat = self.direction == pygrgl.TraversalDirection.DOWN
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
+
+    def _matmat_helper(self, other_matrix, direction, op_method):
+        # For UP, we have "(N x M) x (M x k)", so we need to split the other_matrix into chunks of the
+        # appropriate size <= M.
+        futures = []
+        if direction == pygrgl.TraversalDirection.UP:
+            start = 0
+            for op in self.operators:
+                end = start + op.shape[1]
+                assert end <= other_matrix.shape[0]
+                sub_matrix = other_matrix[start:end, :]
+                futures.append(self.executor.submit(op_method, op, sub_matrix))
+                start = end
+            result = None
+            for future in futures:
+                if result is None:
+                    result = future.result()
+                else:
+                    result += future.result()
+            return result
+        # For DOWN, we have "(M x N) x (N x k)", so it is much simpler (no splitting)
+        else:
+            for op in self.operators:
+                futures.append(self.executor.submit(op_method, op, other_matrix))
+            result = [f.result() for f in futures]
+            return numpy.concatenate(result)
+
+    def _matmat(self, other_matrix):
+        return self._matmat_helper(
+            other_matrix, self.direction, SciPyStdXOperator._matmat
+        )
+
+    def _rmatmat(self, other_matrix):
+        return self._matmat_helper(
+            other_matrix, _flip_dir(self.direction), SciPyStdXOperator._rmatmat
+        )
+
+    def _matvec(self, vect):
+        vect = numpy.array([vect]).T
+        return self._matmat(vect)
+
+    def _rmatvec(self, vect):
+        vect = numpy.array([vect]).T
+        return self._rmatmat(vect)
+
+
+class MultiSciPyStdXTXOperator(LinearOperator):
+    def __init__(
+        self,
+        grgs: List[pygrgl.GRG],
+        freqs: List[numpy.typing.NDArray],
+        haploid: bool = False,
+        dtype=numpy.float64,
+        threads: int = 1,
+    ):
+        self.std_x_op = MultiSciPyStdXOperator(
+            grgs,
+            pygrgl.TraversalDirection.UP,
+            freqs,
+            haploid=haploid,
+            dtype=dtype,
+            threads=threads,
+        )
+        xtx_shape = (self.std_x_op.num_mutations, self.std_x_op.num_mutations)
+        super().__init__(dtype=dtype, shape=xtx_shape)
+
+    def _matmat(self, other_matrix):
+        D = self.std_x_op._matmat(other_matrix)
+        return self.std_x_op._rmatmat(D)
+
+    def _rmatmat(self, other_matrix):
+        return self._matmat(other_matrix)
+
+    def _matvec(self, vect):
+        vect = numpy.array([vect]).T
+        return self._matmat(vect)
+
+    def _rmatvec(self, vect):
+        return self._matvec(vect)

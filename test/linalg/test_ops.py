@@ -1,23 +1,55 @@
 from grapp.linalg.ops_scipy import (
+    MultiSciPyStdXOperator,
+    MultiSciPyStdXTXOperator,
+    MultiSciPyXOperator,
+    MultiSciPyXTXOperator,
     SciPyStdXOperator,
-    SciPyXOperator,
     SciPyStdXTXOperator,
+    SciPyXOperator,
+    SciPyXTXOperator,
 )
 from grapp.util import allele_frequencies
-import pygrgl
+import glob
 import numpy
 import os
-import unittest
+import pygrgl
+import shutil
+import subprocess
 import sys
+import unittest
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(THIS_DIR, ".."))
 from testing_utils import construct_grg, standardize_X, grg2X
 
 CLEANUP = True
+JOBS = 4
 
 # Absolute error tolerated between numpy and GRG methods.
 ABSOLUTE_TOLERANCE = 1e-10
+
+
+def split_and_load(grg_filename: str, out_dir: str, cleanup: bool = True):
+    subprocess.check_output(
+        [
+            "grg",
+            "split",
+            "-j",
+            str(JOBS),
+            grg_filename,
+            "-s",
+            str(1_000_000),
+            "-o",
+            out_dir,
+        ]
+    )
+    grgs = []
+    for fn in glob.glob(os.path.join(out_dir, "*.grg")):
+        grgs.append(pygrgl.load_immutable_grg(fn))
+    grgs.sort(key=lambda g: g.bp_range[0])
+    if cleanup:
+        shutil.rmtree(out_dir)
+    return grgs
 
 
 class TestLinearOperators(unittest.TestCase):
@@ -117,6 +149,92 @@ class TestLinearOperators(unittest.TestCase):
         self.assertFalse(numpy.any(numpy.isnan(grg_result)))
         self.assertFalse(numpy.any(numpy.isnan(numpy_result)))
         numpy.testing.assert_allclose(grg_result, numpy_result, atol=ABSOLUTE_TOLERANCE)
+
+    def test_multi_ops(self):
+        """
+        Test that the operators that work with multiple GRGs produce the same result
+        as ones that work with a single GRG.
+        """
+
+        # Split the graph and get the multiple GRGs, for testing all of the below.
+        test_dir = "test.multi_ops.split"
+        grgs = split_and_load(self.grg_filename, test_dir, CLEANUP)
+
+        #### Direction == UP
+        K = 10
+        random_input = numpy.random.standard_normal((K, self.grg.num_mutations)).T
+
+        # Result on the full graph.
+        grg_op = SciPyXOperator(self.grg, pygrgl.TraversalDirection.UP, haploid=False)
+        full_dip_result = grg_op._matmat(random_input)
+        # Result on the split graph
+        multi_op = MultiSciPyXOperator(
+            grgs, pygrgl.TraversalDirection.UP, haploid=False, threads=JOBS
+        )
+        split_dip_result = multi_op._matmat(random_input)
+        # Test equality
+        numpy.testing.assert_allclose(full_dip_result, split_dip_result)
+
+        #### Direction == DOWN
+        random_input = numpy.random.standard_normal((K, self.grg.num_individuals)).T
+        # Reverse from above
+        full_dip_result = grg_op._rmatmat(random_input)
+        split_dip_result = multi_op._rmatmat(random_input)
+        numpy.testing.assert_allclose(full_dip_result, split_dip_result)
+
+        # Result on the full graph.
+        grg_op = SciPyXOperator(self.grg, pygrgl.TraversalDirection.DOWN, haploid=False)
+        full_dip_result = grg_op._matmat(random_input)
+        # Result on the split graph
+        multi_op = MultiSciPyXOperator(
+            grgs, pygrgl.TraversalDirection.DOWN, haploid=False, threads=JOBS
+        )
+        split_dip_result = multi_op._matmat(random_input)
+        # Test equality
+        numpy.testing.assert_allclose(full_dip_result, split_dip_result)
+
+        #### XTX non-standardized
+        random_input = numpy.random.standard_normal((K, self.grg.num_mutations)).T
+        # Result on the full graph.
+        grg_op = SciPyXTXOperator(self.grg, haploid=False)
+        full_dip_result = grg_op._matmat(random_input)
+        # Result on the split graph
+        multi_op = MultiSciPyXTXOperator(grgs, haploid=False, threads=JOBS)
+        split_dip_result = multi_op._matmat(random_input)
+        # Test equality
+        numpy.testing.assert_allclose(full_dip_result, split_dip_result)
+
+        #### X standardized (UP)
+        random_input = numpy.random.standard_normal((K, self.grg.num_mutations)).T
+        # Result on the full graph.
+        freqs = allele_frequencies(self.grg)
+        grg_op = SciPyStdXOperator(
+            self.grg, pygrgl.TraversalDirection.UP, freqs, haploid=False
+        )
+        full_dip_result = grg_op._matmat(random_input)
+        # Result on the split graph
+        freq_list = list(map(allele_frequencies, grgs))
+        multi_op = MultiSciPyStdXOperator(
+            grgs, pygrgl.TraversalDirection.UP, freq_list, haploid=False, threads=JOBS
+        )
+        split_dip_result = multi_op._matmat(random_input)
+        # Test equality
+        numpy.testing.assert_allclose(full_dip_result, split_dip_result)
+
+        #### XTX standardized
+        random_input = numpy.random.standard_normal((K, self.grg.num_mutations)).T
+        # Result on the full graph.
+        grg_op = SciPyStdXTXOperator(self.grg, freqs, haploid=False)
+        full_dip_result = grg_op._matmat(random_input)
+        # Result on the split graph
+        multi_op = MultiSciPyStdXTXOperator(
+            grgs, freq_list, haploid=False, threads=JOBS
+        )
+        split_dip_result = multi_op._matmat(random_input)
+        # Test equality
+        numpy.testing.assert_allclose(
+            full_dip_result, split_dip_result, atol=ABSOLUTE_TOLERANCE
+        )
 
     @classmethod
     def tearDownClass(cls):
