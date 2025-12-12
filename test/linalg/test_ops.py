@@ -291,6 +291,7 @@ class TestLinearOperators(unittest.TestCase):
 
         K = 20  # Use 20 random vectors for test.
         random_mutvals = numpy.random.standard_normal((K, len(keep_mutations))).T
+        random_mutvec = numpy.random.standard_normal(keep_mutations)
         random_sampvals = numpy.random.standard_normal((K, self.grg.num_individuals)).T
 
         X = grg2X(self.grg, diploid=True)
@@ -301,35 +302,44 @@ class TestLinearOperators(unittest.TestCase):
 
         ### Non-standardized X operator
         # UP
-        numpy_dip_result = numpy.matmul(X_dip, random_mutvals)
         grg_dip_op = SciPyXOperator(
             self.grg, pygrgl.TraversalDirection.UP, mutation_filter=keep_mutations
         )
+        numpy_dip_result = numpy.matvec(X_dip, random_mutvec)
+        grg_dip_result = grg_dip_op._matvec(random_mutvec)
+        numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
+        numpy_dip_result = numpy.matmul(X_dip, random_mutvals)
         grg_dip_result = grg_dip_op._matmat(random_mutvals)
         numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
         # DOWN
-        numpy_dip_result = numpy.matmul(X_dip.T, random_sampvals)
         grg_dip_op = SciPyXOperator(
             self.grg, pygrgl.TraversalDirection.DOWN, mutation_filter=keep_mutations
         )
+        numpy_dip_result = numpy.matmul(X_dip.T, random_sampvals)
         grg_dip_result = grg_dip_op._matmat(random_sampvals)
         numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
 
         ### Non-standardized XTX operator
-        numpy_dip_result = numpy.matmul(numpy.matmul(X_dip.T, X_dip), random_mutvals)
         grg_dip_op = SciPyXTXOperator(self.grg, mutation_filter=keep_mutations)
+        numpy_dip_result = numpy.matmul(numpy.matmul(X_dip.T, X_dip), random_mutvec)
+        grg_dip_result = grg_dip_op._matvec(random_mutvec)
+        numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
+        numpy_dip_result = numpy.matmul(numpy.matmul(X_dip.T, X_dip), random_mutvals)
         grg_dip_result = grg_dip_op._matmat(random_mutvals)
         numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
 
         ### Standardized X operator
         # UP
-        numpy_dip_result = numpy.matmul(X_dip_std, random_mutvals)
         grg_op = SciPyStdXOperator(
             self.grg,
             pygrgl.TraversalDirection.UP,
             freqs,
             mutation_filter=keep_mutations,
         )
+        numpy_dip_result = numpy.matmul(X_dip_std, random_mutvec)
+        grg_dip_result = grg_op._matvec(random_mutvec)
+        numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
+        numpy_dip_result = numpy.matmul(X_dip_std, random_mutvals)
         grg_dip_result = grg_op._matmat(random_mutvals)
         numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
         # DOWN
