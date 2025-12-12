@@ -2,6 +2,7 @@ from grapp.cli import assoc_cli
 from grapp.cli import export_cli
 from grapp.cli import filter_cli
 from grapp.cli import pca_cli
+from grapp.cli import show_cli
 from grapp.util.simple import UserInputError
 
 import argparse
@@ -11,6 +12,7 @@ CMD_ASSOC = "assoc"
 CMD_PCA = "pca"
 CMD_EXPORT = "export"
 CMD_FILTER = "filter"
+CMD_SHOW = "show"
 
 
 def main():
@@ -36,6 +38,11 @@ def main():
         help="Export data from a GRG.",
     )
     filter_cli.add_options(filter_parser)
+    show_parser = subparsers.add_parser(
+        CMD_SHOW,
+        help="Show data from a GRG.",
+    )
+    show_cli.add_options(show_parser)
 
     try:
         args = parser.parse_args()
@@ -51,6 +58,8 @@ def main():
             export_cli.run(args)
         elif args.command == CMD_FILTER:
             filter_cli.run(args)
+        elif args.command == CMD_SHOW:
+            show_cli.run(args)
         else:
             print(f"Invalid command {args.command}", file=sys.stderr)
             parser.print_help()
