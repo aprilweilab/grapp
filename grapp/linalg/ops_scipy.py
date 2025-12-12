@@ -66,7 +66,7 @@ class SciPyXOperator(LinearOperator):
         self.grg_shape = (self.sample_count, grg.num_mutations)
         shape = (
             self.grg_shape
-            if len(mutation_filter)>0
+            if len(mutation_filter) > 0
             else (self.grg_shape[0], len(self.mutation_filter))
         )
         if self.direction == _DOWN:
@@ -137,7 +137,9 @@ class SciPyXTXOperator(LinearOperator):
         haploid: bool = False,
         mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
     ):
-        num_muts = grg.num_mutations if not(mutation_filter is None) else len(mutation_filter)
+        num_muts = (
+            grg.num_mutations if not (mutation_filter is None) else len(mutation_filter)
+        )
         xtx_shape = (num_muts, num_muts)
         super().__init__(dtype=dtype, shape=xtx_shape)
         self.x_op = SciPyXOperator(
@@ -243,7 +245,7 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
         self.grg_shape = (self.sample_count, grg.num_mutations)
         shape = (
             self.grg_shape
-            if not(mutation_filter is None)
+            if not (mutation_filter is None)
             else (self.grg_shape[0], len(self.mutation_filter))
         )
         if self.direction == _DOWN:
@@ -351,7 +353,9 @@ class SciPyStdXTXOperator(LinearOperator):
         haploid: bool = False,
         mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
     ):
-        num_muts = grg.num_mutations if not(mutation_filter is None) else len(mutation_filter)
+        num_muts = (
+            grg.num_mutations if not (mutation_filter is None) else len(mutation_filter)
+        )
         xtx_shape = (num_muts, num_muts)
         super().__init__(dtype=dtype, shape=xtx_shape)
         self.std_x_op = SciPyStdXOperator(
@@ -649,14 +653,14 @@ class MultiSciPyStdXOperator(LinearOperator):
         self.num_mutations = sum([g.num_mutations for g in grgs])
         num_samples = grgs[0].num_samples
         self.mutation_filter = mutation_filter
-        if len(self.mutation_filter)>0:
+        if len(self.mutation_filter) > 0:
             assert len(self.mutation_filter) <= self.num_mutations
             self.num_mutations = len(self.mutation_filter)
         prev_max_mut = 0
         self.operators = []
         for g, f in zip(grgs, freqs):
             assert g.num_samples == num_samples, "All GRGs must use the same samples"
-            if len(self.mutation_filter)>0:
+            if len(self.mutation_filter) > 0:
                 grg_mut_filt = list(
                     map(
                         lambda m: m - prev_max_mut,

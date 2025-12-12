@@ -291,7 +291,7 @@ class TestLinearOperators(unittest.TestCase):
 
         K = 20  # Use 20 random vectors for test.
         random_mutvals = numpy.random.standard_normal((K, len(keep_mutations))).T
-        random_mutvec = numpy.random.standard_normal(keep_mutations)
+        random_mutvec = numpy.random.standard_normal(len(keep_mutations))
         random_sampvals = numpy.random.standard_normal((K, self.grg.num_individuals)).T
 
         X = grg2X(self.grg, diploid=True)
@@ -305,7 +305,7 @@ class TestLinearOperators(unittest.TestCase):
         grg_dip_op = SciPyXOperator(
             self.grg, pygrgl.TraversalDirection.UP, mutation_filter=keep_mutations
         )
-        numpy_dip_result = numpy.matvec(X_dip, random_mutvec)
+        numpy_dip_result = numpy.matmul(X_dip, random_mutvec)
         grg_dip_result = grg_dip_op._matvec(random_mutvec)
         numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
         numpy_dip_result = numpy.matmul(X_dip, random_mutvals)
