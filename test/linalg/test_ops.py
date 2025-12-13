@@ -306,7 +306,7 @@ class TestLinearOperators(unittest.TestCase):
             self.grg, pygrgl.TraversalDirection.UP, mutation_filter=keep_mutations
         )
         numpy_dip_result = numpy.matmul(X_dip, random_mutvec)
-        grg_dip_result = grg_dip_op._matvec(random_mutvec)
+        grg_dip_result = grg_dip_op._matvec(random_mutvec).squeeze()
         numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
         numpy_dip_result = numpy.matmul(X_dip, random_mutvals)
         grg_dip_result = grg_dip_op._matmat(random_mutvals)
@@ -322,7 +322,7 @@ class TestLinearOperators(unittest.TestCase):
         ### Non-standardized XTX operator
         grg_dip_op = SciPyXTXOperator(self.grg, mutation_filter=keep_mutations)
         numpy_dip_result = numpy.matmul(numpy.matmul(X_dip.T, X_dip), random_mutvec)
-        grg_dip_result = grg_dip_op._matvec(random_mutvec)
+        grg_dip_result = grg_dip_op._matvec(random_mutvec).squeeze()
         numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
         numpy_dip_result = numpy.matmul(numpy.matmul(X_dip.T, X_dip), random_mutvals)
         grg_dip_result = grg_dip_op._matmat(random_mutvals)
@@ -337,7 +337,7 @@ class TestLinearOperators(unittest.TestCase):
             mutation_filter=keep_mutations,
         )
         numpy_dip_result = numpy.matmul(X_dip_std, random_mutvec)
-        grg_dip_result = grg_op._matvec(random_mutvec)
+        grg_dip_result = grg_op._matvec(random_mutvec).squeeze()
         numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
         numpy_dip_result = numpy.matmul(X_dip_std, random_mutvals)
         grg_dip_result = grg_op._matmat(random_mutvals)

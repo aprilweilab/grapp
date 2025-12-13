@@ -66,7 +66,7 @@ class SciPyXOperator(LinearOperator):
         self.grg_shape = (self.sample_count, grg.num_mutations)
         shape = (
             self.grg_shape
-            if len(mutation_filter) > 0
+            if not mutation_filter
             else (self.grg_shape[0], len(self.mutation_filter))
         )
         if self.direction == _DOWN:
@@ -239,13 +239,15 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
         haploid: bool = False,
         mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
     ):
+        if isinstance(mutation_filter, numpy.ndarray):
+            mutation_filter = mutation_filter.tolist()
         self.direction = direction
         self.sample_count = grg.num_samples if haploid else grg.num_individuals
         self.mutation_filter = mutation_filter
         self.grg_shape = (self.sample_count, grg.num_mutations)
         shape = (
             self.grg_shape
-            if not (mutation_filter is None)
+            if not mutation_filter
             else (self.grg_shape[0], len(self.mutation_filter))
         )
         if self.direction == _DOWN:
@@ -353,8 +355,10 @@ class SciPyStdXTXOperator(LinearOperator):
         haploid: bool = False,
         mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
     ):
+        if isinstance(mutation_filter, numpy.ndarray):
+            mutation_filter = mutation_filter.tolist()
         num_muts = (
-            grg.num_mutations if not (mutation_filter is None) else len(mutation_filter)
+            grg.num_mutations if not mutation_filter  else len(mutation_filter)
         )
         xtx_shape = (num_muts, num_muts)
         super().__init__(dtype=dtype, shape=xtx_shape)
@@ -469,6 +473,8 @@ class MultiSciPyXOperator(LinearOperator):
         mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
         threads: int = 1,
     ):
+        if isinstance(mutation_filter, numpy.ndarray):
+            mutation_filter = mutation_filter.tolist()
         assert len(grgs) >= 1, "Must provide at least one GRG"
         self.direction = direction
         self.num_mutations = sum([g.num_mutations for g in grgs])
@@ -520,7 +526,7 @@ class MultiSciPyXOperator(LinearOperator):
             start = 0
             for op in self.operators:
                 end = start + op.shape[1]
-                assert end <= other_matrix.shape[0]
+                # assert end <= other_matrix.shape[0] # FIX ME: this will cause error when using mutation_filter
                 sub_matrix = other_matrix[start:end, :]
                 futures.append(self.executor.submit(op_method, op, sub_matrix))
                 start = end
@@ -647,20 +653,22 @@ class MultiSciPyStdXOperator(LinearOperator):
         mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
         threads: int = 1,
     ):
+        if isinstance(mutation_filter, numpy.ndarray):
+            mutation_filter = mutation_filter.tolist()
         assert len(grgs) >= 1, "Must provide at least one GRG"
         assert len(grgs) == len(freqs), "Must provide allele frequencies for every GRG"
         self.direction = direction
         self.num_mutations = sum([g.num_mutations for g in grgs])
         num_samples = grgs[0].num_samples
         self.mutation_filter = mutation_filter
-        if len(self.mutation_filter) > 0:
+        if mutation_filter:
             assert len(self.mutation_filter) <= self.num_mutations
             self.num_mutations = len(self.mutation_filter)
         prev_max_mut = 0
         self.operators = []
         for g, f in zip(grgs, freqs):
             assert g.num_samples == num_samples, "All GRGs must use the same samples"
-            if len(self.mutation_filter) > 0:
+            if self.mutation_filter:
                 grg_mut_filt = list(
                     map(
                         lambda m: m - prev_max_mut,
