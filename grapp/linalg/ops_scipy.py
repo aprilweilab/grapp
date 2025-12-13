@@ -357,9 +357,7 @@ class SciPyStdXTXOperator(LinearOperator):
     ):
         if isinstance(mutation_filter, numpy.ndarray):
             mutation_filter = mutation_filter.tolist()
-        num_muts = (
-            grg.num_mutations if not mutation_filter  else len(mutation_filter)
-        )
+        num_muts = grg.num_mutations if not mutation_filter else len(mutation_filter)
         xtx_shape = (num_muts, num_muts)
         super().__init__(dtype=dtype, shape=xtx_shape)
         self.std_x_op = SciPyStdXOperator(
