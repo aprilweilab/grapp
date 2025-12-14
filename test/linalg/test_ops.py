@@ -360,6 +360,12 @@ class TestLinearOperators(unittest.TestCase):
         numpy_dip_result = numpy.matmul(X_dip, random_mutvals)
         grg_dip_result = grg_dip_op._matmat(random_mutvals)
         numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
+        grg_dip_multi_op = MultiSciPyXOperator(
+            [self.grg], pygrgl.TraversalDirection.UP, mutation_filter=keep_mutations
+        )
+        grg_dip_multi_result = grg_dip_multi_op._matmat(random_mutvals)
+        numpy.testing.assert_allclose(grg_dip_multi_result, numpy_dip_result)
+
         # DOWN
         grg_dip_op = SciPyXOperator(
             self.grg, pygrgl.TraversalDirection.DOWN, mutation_filter=keep_mutations
