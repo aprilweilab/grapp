@@ -193,6 +193,13 @@ class TestLinearOperators(unittest.TestCase):
         # Test equality
         numpy.testing.assert_allclose(full_dip_result, split_dip_result)
 
+        # Vector version
+        vec_result = grg_op._matvec(random_input[:, 1])
+        split_vec_result = multi_op._matvec(random_input[:, 1])
+        numpy.testing.assert_allclose(
+            vec_result, split_vec_result, atol=ABSOLUTE_TOLERANCE
+        )
+
         #### XTX non-standardized
         random_input = numpy.random.standard_normal((K, self.grg.num_mutations)).T
         # Result on the full graph.
@@ -203,6 +210,13 @@ class TestLinearOperators(unittest.TestCase):
         split_dip_result = multi_op._matmat(random_input)
         # Test equality
         numpy.testing.assert_allclose(full_dip_result, split_dip_result)
+
+        # Vector version
+        vec_result = grg_op._matvec(random_input[:, 1])
+        split_vec_result = multi_op._matvec(random_input[:, 1])
+        numpy.testing.assert_allclose(
+            vec_result, split_vec_result, atol=ABSOLUTE_TOLERANCE
+        )
 
         #### X standardized (UP)
         random_input = numpy.random.standard_normal((K, self.grg.num_mutations)).T
@@ -221,6 +235,13 @@ class TestLinearOperators(unittest.TestCase):
         # Test equality
         numpy.testing.assert_allclose(full_dip_result, split_dip_result)
 
+        # Vector version
+        vec_result = grg_op._matvec(random_input[:, 1])
+        split_vec_result = multi_op._matvec(random_input[:, 1])
+        numpy.testing.assert_allclose(
+            vec_result, split_vec_result, atol=ABSOLUTE_TOLERANCE
+        )
+
         #### XTX standardized
         random_input = numpy.random.standard_normal((K, self.grg.num_mutations)).T
         # Result on the full graph.
@@ -234,6 +255,13 @@ class TestLinearOperators(unittest.TestCase):
         # Test equality
         numpy.testing.assert_allclose(
             full_dip_result, split_dip_result, atol=ABSOLUTE_TOLERANCE
+        )
+
+        # Vector version
+        vec_result = grg_op._matvec(random_input[:, 1])
+        split_vec_result = multi_op._matvec(random_input[:, 1])
+        numpy.testing.assert_allclose(
+            vec_result, split_vec_result, atol=ABSOLUTE_TOLERANCE
         )
 
         ### Test with a contiguous mutation filter
@@ -256,6 +284,13 @@ class TestLinearOperators(unittest.TestCase):
         )
         split_dip_result = multi_op._matmat(random_input)
         numpy.testing.assert_allclose(full_dip_result, split_dip_result)
+
+        # Vector version
+        vec_result = grg_op._matvec(random_input[:, 1])
+        split_vec_result = multi_op._matvec(random_input[:, 1])
+        numpy.testing.assert_allclose(
+            vec_result, split_vec_result, atol=ABSOLUTE_TOLERANCE
+        )
 
         ### Test with a scattered mutation filter
         total_muts = sum([g.num_mutations for g in grgs])
@@ -282,6 +317,20 @@ class TestLinearOperators(unittest.TestCase):
         )
         split_dip_result = multi_op._matmat(random_input)
         numpy.testing.assert_allclose(full_dip_result, split_dip_result)
+        # Vector version
+        vec_result = grg_op._matvec(random_input[:, 1])
+        split_vec_result = multi_op._matvec(random_input[:, 1])
+        numpy.testing.assert_allclose(
+            vec_result, split_vec_result, atol=ABSOLUTE_TOLERANCE
+        )
+
+        # Reverse direction
+        random_input = numpy.random.standard_normal((K, self.grg.num_individuals)).T
+        rev_result = grg_op._rmatmat(random_input)
+        split_rev_result = multi_op._rmatmat(random_input)
+        numpy.testing.assert_allclose(
+            rev_result, split_rev_result, atol=ABSOLUTE_TOLERANCE
+        )
 
     def test_filtering(self):
         """
