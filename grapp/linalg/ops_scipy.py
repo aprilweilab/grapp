@@ -712,7 +712,7 @@ class MultiSciPyStdXOperator(LinearOperator):
             start = 0
             for op in self.operators:
                 end = start + op.shape[1]
-                # assert end <= other_matrix.shape[0] # FIX ME: this will cause error when using mutation_filter
+                assert end <= other_matrix.shape[0]
                 sub_matrix = other_matrix[start:end, :]
                 futures.append(self.executor.submit(op_method, op, sub_matrix))
                 start = end
