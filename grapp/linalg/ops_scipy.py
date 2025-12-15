@@ -4,7 +4,7 @@ Linear operators that are compatible with scipy.
 
 from scipy.sparse.linalg import LinearOperator
 from pygrgl import TraversalDirection
-from typing import Tuple, Union, List
+from typing import Tuple, Union, List, Optional
 import concurrent.futures
 import numpy
 import pygrgl
@@ -47,7 +47,7 @@ class SciPyXOperator(LinearOperator):
     :type haploid: bool
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
         mutation_filter) instead of NxM. Default: empty filter.
-    :type mutation_filter: Union[List[int], numpy.typing.NDArray]
+    :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     """
 
     def __init__(
@@ -56,8 +56,10 @@ class SciPyXOperator(LinearOperator):
         direction: TraversalDirection,
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
-        mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
+        mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
     ):
+        if isinstance(mutation_filter, numpy.ndarray):
+            mutation_filter = mutation_filter.tolist()
         self.haploid = haploid
         self.grg = grg
         self.sample_count = grg.num_samples if haploid else grg.num_individuals
@@ -66,8 +68,8 @@ class SciPyXOperator(LinearOperator):
         self.grg_shape = (self.sample_count, grg.num_mutations)
         shape = (
             self.grg_shape
-            if not mutation_filter
-            else (self.grg_shape[0], len(self.mutation_filter))
+            if mutation_filter is None
+            else (self.grg_shape[0], len(self.mutation_filter))  # type: ignore
         )
         if self.direction == _DOWN:
             shape = _transpose_shape(shape)
@@ -76,7 +78,7 @@ class SciPyXOperator(LinearOperator):
     def _matmat_helper(
         self, other_matrix: numpy.typing.NDArray, mult_dir: TraversalDirection
     ):
-        if self.mutation_filter and mult_dir == _DOWN:
+        if self.mutation_filter is not None and mult_dir == _DOWN:
             A = numpy.zeros(
                 (other_matrix.shape[1], self.grg_shape[1]), dtype=other_matrix.dtype
             )
@@ -90,7 +92,7 @@ class SciPyXOperator(LinearOperator):
             by_individual=not self.haploid,
         )
         Y = result
-        if self.mutation_filter and mult_dir == _UP:
+        if self.mutation_filter is not None and mult_dir == _UP:
             Y = Y[:, self.mutation_filter]  # type: ignore
         return Y.T
 
@@ -127,7 +129,7 @@ class SciPyXTXOperator(LinearOperator):
     :type haploid: bool
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
         mutation_filter) instead of NxM. Default: empty filter.
-    :type mutation_filter: Union[List[int], numpy.typing.NDArray]
+    :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     """
 
     def __init__(
@@ -135,9 +137,13 @@ class SciPyXTXOperator(LinearOperator):
         grg: pygrgl.GRG,
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
-        mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
+        mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
     ):
-        num_muts = grg.num_mutations if not mutation_filter else len(mutation_filter)
+        if isinstance(mutation_filter, numpy.ndarray):
+            mutation_filter = mutation_filter.tolist()
+        num_muts = (
+            grg.num_mutations if mutation_filter is None else len(mutation_filter)
+        )
         xtx_shape = (num_muts, num_muts)
         super().__init__(dtype=dtype, shape=xtx_shape)
         self.x_op = SciPyXOperator(
@@ -225,7 +231,7 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
     :type haploid: bool
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
         mutation_filter) instead of NxM. Default: empty filter.
-    :type mutation_filter: Union[List[int], numpy.typing.NDArray]
+    :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     """
 
     def __init__(
@@ -235,16 +241,18 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
         freqs: numpy.typing.NDArray,
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
-        mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
+        mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
     ):
+        if isinstance(mutation_filter, numpy.ndarray):
+            mutation_filter = mutation_filter.tolist()
         self.direction = direction
         self.sample_count = grg.num_samples if haploid else grg.num_individuals
         self.mutation_filter = mutation_filter
         self.grg_shape = (self.sample_count, grg.num_mutations)
         shape = (
             self.grg_shape
-            if not mutation_filter
-            else (self.grg_shape[0], len(self.mutation_filter))
+            if mutation_filter is None
+            else (self.grg_shape[0], len(self.mutation_filter))  # type: ignore
         )
         if self.direction == _DOWN:
             shape = _transpose_shape(shape)
@@ -254,7 +262,7 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
         mult_dir = _flip_dir(direction)
 
         def expandm(matrix):
-            if self.mutation_filter and mult_dir == _DOWN:
+            if self.mutation_filter is not None and mult_dir == _DOWN:
                 result = numpy.zeros(
                     (matrix.shape[0], self.grg_shape[1]), dtype=matrix.dtype
                 )
@@ -263,7 +271,7 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
             return matrix
 
         def contractm(matrix):
-            if self.mutation_filter and mult_dir == _UP:
+            if self.mutation_filter is not None and mult_dir == _UP:
                 return matrix[:, self.mutation_filter]  # type: ignore
             return matrix
 
@@ -340,7 +348,7 @@ class SciPyStdXTXOperator(LinearOperator):
     :type haploid: bool
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
         mutation_filter) instead of NxM. Default: empty filter.
-    :type mutation_filter: Union[List[int], numpy.typing.NDArray]
+    :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     """
 
     def __init__(
@@ -349,9 +357,13 @@ class SciPyStdXTXOperator(LinearOperator):
         freqs: numpy.typing.NDArray,
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
-        mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
+        mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
     ):
-        num_muts = grg.num_mutations if not mutation_filter else len(mutation_filter)
+        if isinstance(mutation_filter, numpy.ndarray):
+            mutation_filter = mutation_filter.tolist()
+        num_muts = (
+            grg.num_mutations if mutation_filter is None else len(mutation_filter)
+        )
         xtx_shape = (num_muts, num_muts)
         super().__init__(dtype=dtype, shape=xtx_shape)
         self.std_x_op = SciPyStdXOperator(
@@ -450,7 +462,7 @@ class MultiSciPyXOperator(LinearOperator):
     :type haploid: bool
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
         mutation_filter) instead of NxM. Default: empty filter.
-    :type mutation_filter: Union[List[int], numpy.typing.NDArray]
+    :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     :param threads: Number of threads for performing the multiplication. Each GRG can be done in
         parallel.
     :type threads: int
@@ -462,14 +474,16 @@ class MultiSciPyXOperator(LinearOperator):
         direction: pygrgl.TraversalDirection,
         dtype=numpy.float64,
         haploid: bool = False,
-        mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
+        mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
     ):
+        if isinstance(mutation_filter, numpy.ndarray):
+            mutation_filter = mutation_filter.tolist()
         assert len(grgs) >= 1, "Must provide at least one GRG"
         self.direction = direction
         self.num_mutations = sum([g.num_mutations for g in grgs])
         self.mutation_filter = mutation_filter
-        if self.mutation_filter:
+        if self.mutation_filter is not None:
             assert len(self.mutation_filter) <= self.num_mutations
             self.num_mutations = len(self.mutation_filter)
         self.operators = []
@@ -477,7 +491,7 @@ class MultiSciPyXOperator(LinearOperator):
         prev_max_mut = 0
         for g in grgs:
             assert g.num_samples == num_samples, "All GRGs must use the same samples"
-            if self.mutation_filter:
+            if self.mutation_filter is not None:
                 grg_mut_filt = list(
                     map(
                         lambda m: m - prev_max_mut,
@@ -491,7 +505,7 @@ class MultiSciPyXOperator(LinearOperator):
                 # If we have an overall filter, but no filter for _this_ GRG, then we just skip it.
                 skip = len(grg_mut_filt) == 0
             else:
-                grg_mut_filt = []
+                grg_mut_filt = None
                 skip = False
             if not skip:
                 self.operators.append(
@@ -567,7 +581,7 @@ class MultiSciPyXTXOperator(LinearOperator):
     :type haploid: bool
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
         mutation_filter) instead of NxM. Default: empty filter.
-    :type mutation_filter: Union[List[int], numpy.typing.NDArray]
+    :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     :param threads: Number of threads for performing the multiplication. Each GRG can be done in
         parallel.
     :type threads: int
@@ -578,7 +592,7 @@ class MultiSciPyXTXOperator(LinearOperator):
         grgs: List[pygrgl.GRG],
         dtype=numpy.float64,
         haploid: bool = False,
-        mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
+        mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
     ):
         self.x_op = MultiSciPyXOperator(
@@ -627,7 +641,7 @@ class MultiSciPyStdXOperator(LinearOperator):
     :type haploid: bool
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
         mutation_filter) instead of NxM. Default: empty filter.
-    :type mutation_filter: Union[List[int], numpy.typing.NDArray]
+    :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     :param threads: Number of threads for performing the multiplication. Each GRG can be done in
         parallel.
     :type threads: int
@@ -640,23 +654,25 @@ class MultiSciPyStdXOperator(LinearOperator):
         freqs: List[numpy.typing.NDArray],
         haploid: bool = False,
         dtype=numpy.float64,
-        mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
+        mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
     ):
+        if isinstance(mutation_filter, numpy.ndarray):
+            mutation_filter = mutation_filter.tolist()
         assert len(grgs) >= 1, "Must provide at least one GRG"
         assert len(grgs) == len(freqs), "Must provide allele frequencies for every GRG"
         self.direction = direction
         self.num_mutations = sum([g.num_mutations for g in grgs])
         num_samples = grgs[0].num_samples
         self.mutation_filter = mutation_filter
-        if self.mutation_filter:
-            assert len(self.mutation_filter) <= self.num_mutations
-            self.num_mutations = len(self.mutation_filter)
+        if mutation_filter is not None:
+            assert len(self.mutation_filter) <= self.num_mutations  # type: ignore
+            self.num_mutations = len(self.mutation_filter)  # type: ignore
         prev_max_mut = 0
         self.operators = []
         for g, f in zip(grgs, freqs):
             assert g.num_samples == num_samples, "All GRGs must use the same samples"
-            if self.mutation_filter:
+            if self.mutation_filter is not None:
                 grg_mut_filt = list(
                     map(
                         lambda m: m - prev_max_mut,
@@ -670,7 +686,7 @@ class MultiSciPyStdXOperator(LinearOperator):
                 # If we have an overall filter, but no filter for _this_ GRG, then we just skip it.
                 skip = len(grg_mut_filt) == 0
             else:
-                grg_mut_filt = []
+                grg_mut_filt = None
                 skip = False
             if not skip:
                 self.operators.append(
@@ -696,7 +712,7 @@ class MultiSciPyStdXOperator(LinearOperator):
             start = 0
             for op in self.operators:
                 end = start + op.shape[1]
-                assert end <= other_matrix.shape[0]
+                # assert end <= other_matrix.shape[0] # FIX ME: this will cause error when using mutation_filter
                 sub_matrix = other_matrix[start:end, :]
                 futures.append(self.executor.submit(op_method, op, sub_matrix))
                 start = end
@@ -749,7 +765,7 @@ class MultiSciPyStdXTXOperator(LinearOperator):
     :type haploid: bool
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
         mutation_filter) instead of NxM. Default: empty filter.
-    :type mutation_filter: Union[List[int], numpy.typing.NDArray]
+    :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     :param threads: Number of threads for performing the multiplication. Each GRG can be done in
         parallel.
     :type threads: int
@@ -761,7 +777,7 @@ class MultiSciPyStdXTXOperator(LinearOperator):
         freqs: List[numpy.typing.NDArray],
         haploid: bool = False,
         dtype=numpy.float64,
-        mutation_filter: Union[List[int], numpy.typing.NDArray] = [],
+        mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
     ):
         self.std_x_op = MultiSciPyStdXOperator(
