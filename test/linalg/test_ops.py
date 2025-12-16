@@ -20,36 +20,13 @@ import unittest
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(THIS_DIR, ".."))
-from testing_utils import construct_grg, standardize_X, grg2X
+from testing_utils import construct_grg, standardize_X, grg2X, split_and_load
 
 CLEANUP = True
 JOBS = 4
 
 # Absolute error tolerated between numpy and GRG methods.
 ABSOLUTE_TOLERANCE = 1e-10
-
-
-def split_and_load(grg_filename: str, out_dir: str, cleanup: bool = True):
-    subprocess.check_output(
-        [
-            "grg",
-            "split",
-            "-j",
-            str(JOBS),
-            grg_filename,
-            "-s",
-            str(1_000_000),
-            "-o",
-            out_dir,
-        ]
-    )
-    grgs = []
-    for fn in glob.glob(os.path.join(out_dir, "*.grg")):
-        grgs.append(pygrgl.load_immutable_grg(fn))
-    grgs.sort(key=lambda g: g.bp_range[0])
-    if cleanup:
-        shutil.rmtree(out_dir)
-    return grgs
 
 
 class TestLinearOperators(unittest.TestCase):
@@ -158,7 +135,7 @@ class TestLinearOperators(unittest.TestCase):
 
         # Split the graph and get the multiple GRGs, for testing all of the below.
         test_dir = "test.multi_ops.split"
-        grgs = split_and_load(self.grg_filename, test_dir, CLEANUP)
+        grgs = split_and_load(self.grg_filename, test_dir, 1_000_000, JOBS, CLEANUP)
 
         #### Direction == UP
         K = 10
@@ -299,24 +276,24 @@ class TestLinearOperators(unittest.TestCase):
         freqs = allele_frequencies(self.grg)
         freq_list = list(map(allele_frequencies, grgs))
 
-        grg_op = SciPyStdXOperator(
+        grg_op = SciPyStdXTXOperator(
             self.grg,
-            pygrgl.TraversalDirection.UP,
             freqs,
             haploid=False,
             mutation_filter=keep_mutations,
         )
         full_dip_result = grg_op._matmat(random_input)
-        multi_op = MultiSciPyStdXOperator(
+        multi_op = MultiSciPyStdXTXOperator(
             grgs,
-            pygrgl.TraversalDirection.UP,
             freq_list,
             haploid=False,
             mutation_filter=keep_mutations,
             threads=JOBS,
         )
         split_dip_result = multi_op._matmat(random_input)
-        numpy.testing.assert_allclose(full_dip_result, split_dip_result)
+        numpy.testing.assert_allclose(
+            full_dip_result, split_dip_result, atol=ABSOLUTE_TOLERANCE
+        )
         # Vector version
         vec_result = grg_op._matvec(random_input[:, 1])
         split_vec_result = multi_op._matvec(random_input[:, 1])
@@ -325,7 +302,7 @@ class TestLinearOperators(unittest.TestCase):
         )
 
         # Reverse direction
-        random_input = numpy.random.standard_normal((K, self.grg.num_individuals)).T
+        # random_input = numpy.random.standard_normal((K, self.grg.num_individuals)).T
         rev_result = grg_op._rmatmat(random_input)
         split_rev_result = multi_op._rmatmat(random_input)
         numpy.testing.assert_allclose(
