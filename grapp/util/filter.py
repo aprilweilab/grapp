@@ -4,8 +4,8 @@ Functions for filtering data out of a GRG to create a new, smaller GRG.
 
 from multiprocessing import Pool
 from typing import List, Tuple, Optional, Union, Callable
-import pygrgl
 import os
+import pygrgl
 
 from grapp.util.simple import UserInputError, allele_frequencies
 
@@ -178,6 +178,61 @@ def grg_save_mut_filter(
         seeds,
         bp_range=bp_range,
     )
+
+
+def multi_grg_save_mut_filter(
+    grgs_or_filenames: Union[List[pygrgl.GRG], List[str]],
+    out_filenames: List[str],
+    mut_filter: Callable[[pygrgl.GRG, int, int], bool],
+):
+    """
+    Given a list of GRG filenames or GRG objects, save a new GRG for each that contains only the
+    Mutations selected by the given filter function. The callback takes the GRG, the MutationID
+    within that GRG, and the "cumulative MutationID" when considering all GRGs sequentially (e.g.
+    the second GRG's mutations start counting right after the last MutationID of the first GRG).
+
+    :param grgs_or_filenames: Either a pygrgl.GRG object, or the filename of a GRG.
+    :type grgs_or_filenames: Union[List[pygrgl.GRG], List[str]]
+    :param out_filenames: The list of filenames of the to-be-created GRGs.
+    :type out_filename: List[str]
+    :param mut_filter: Callback (function) that takes a MutationID (int) as input and returns
+        true if that mutation should be kept.
+    :type mut_filter: Callable[[pygrgl.GRG, int, int], bool]
+    """
+    assert len(grgs_or_filenames) > 0
+    assert len(grgs_or_filenames) == len(
+        out_filenames
+    ), "Input and output lists must be equal length"
+
+    if isinstance(grgs_or_filenames[0], str):
+        grgs = [
+            pygrgl.load_immutable_grg(f, load_up_edges=False) for f in grgs_or_filenames
+        ]
+    else:
+        assert isinstance(grgs_or_filenames[0], pygrgl.GRG)
+        grgs = grgs_or_filenames
+
+    def filter_one(grg, seeds, out_filename):
+        pygrgl.save_subset(
+            grg,
+            out_filename,
+            pygrgl.TraversalDirection.DOWN,
+            seeds,
+        )
+
+    prev_mut_id = 0
+    for out, grg in zip(out_filenames, grgs):
+        seeds = list(
+            filter(
+                lambda m: mut_filter(grg, m, m + prev_mut_id), range(grg.num_mutations)
+            )
+        )
+        if not seeds:
+            raise UserInputError(
+                "No Mutations found matching range; cannot filter to an empty GRG."
+            )
+        filter_one(grg, seeds, out)
+        prev_mut_id += grg.num_mutations
 
 
 def split_by_ranges(

@@ -1,7 +1,9 @@
-from typing import Optional
+from typing import Optional, List
+import glob
 import numpy
 import os
 import pygrgl
+import shutil
 import subprocess
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
@@ -87,3 +89,36 @@ def standardize_X(X: numpy.ndarray):
     # re-zero freq 1 cols
     Xstd[:, zero_sigma] = 0
     return Xstd
+
+
+# Split a GRG and load all the parts, and returns them _sorted by position_
+def split_and_load(
+    grg_filename: str,
+    out_dir: str,
+    size_per: int,
+    jobs: int,
+    cleanup: bool = True,
+    filenames: Optional[List] = None,
+):
+    subprocess.check_output(
+        [
+            "grg",
+            "split",
+            "-j",
+            str(jobs),
+            grg_filename,
+            "-s",
+            str(size_per),
+            "-o",
+            out_dir,
+        ]
+    )
+    grgs = []
+    for fn in glob.glob(os.path.join(out_dir, "*.grg")):
+        grgs.append(pygrgl.load_immutable_grg(fn))
+        if filenames is not None:
+            filenames.append(fn)
+    grgs.sort(key=lambda g: g.bp_range[0])
+    if cleanup:
+        shutil.rmtree(out_dir)
+    return grgs
