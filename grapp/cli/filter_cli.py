@@ -4,6 +4,7 @@ import os
 from grapp.util.filter import (
     grg_save_individuals,
     grg_save_mut_filter,
+    grg_save_populations,
     grg_save_samples,
 )
 from grapp.util.simple import (
@@ -15,11 +16,9 @@ import pygrgl
 
 
 def list_or_filename(arg_value):
-    parts = arg_value.split(",")
-    if len(parts) > 1:
-        return list(map(str.strip, parts))
     if not os.path.isfile(arg_value):
-        raise FileNotFoundError(f"File {arg_value} cannot be read")
+        parts = arg_value.split(",")
+        return list(map(str.strip, parts))
     with open(arg_value) as f:
         return list(map(str.strip, f))
 
@@ -58,6 +57,13 @@ def add_options(subparser: argparse.ArgumentParser):
         type=int_list_or_filename,
         help="Keep only the haploid samples with the NodeIDs (indexes) given as a comma-separated list or in the given filename.",
     )
+    filters.add_argument(
+        "-P",
+        "--populations",
+        type=list_or_filename,
+        help="Keep only the individuals with populations matching the comma-separated list or in the given filename.",
+    )
+
     # You can specify many different filters on mutations simultaneously, but (above) you cannot specify both
     # mutation and sample based filters.
     mutation_group = subparser.add_argument_group("mutation filters")
@@ -101,28 +107,32 @@ def require_unspecified(args, msg, *params):
 
 
 def run(args):
+    def no_mut_filters():
+        require_unspecified(
+            args,
+            "Cannot mix sample and mutation filters",
+            "range",
+            "min_ac",
+            "max_ac",
+            "min_af",
+            "max_af",
+        )
+
     if args.individuals:
-        require_unspecified(
-            args,
-            "Cannot mix sample and mutation filters",
-            "range",
-            "min_ac",
-            "max_ac",
-            "min_af",
-            "max_af",
+        no_mut_filters()
+        grg_save_individuals(
+            args.grg_input, args.grg_output, args.individuals, verbose=True
         )
-        grg_save_individuals(args.grg_input, args.grg_output, args.individuals)
     elif args.hap_samples:
-        require_unspecified(
-            args,
-            "Cannot mix sample and mutation filters",
-            "range",
-            "min_ac",
-            "max_ac",
-            "min_af",
-            "max_af",
+        no_mut_filters()
+        grg_save_samples(
+            args.grg_input, args.grg_output, args.hap_samples, verbose=True
         )
-        grg_save_samples(args.grg_input, args.grg_output, args.hap_samples)
+    elif args.populations:
+        no_mut_filters()
+        grg_save_populations(
+            args.grg_input, args.grg_output, args.populations, verbose=True
+        )
     else:
         if args.range is None:
             brange = (0, 0)

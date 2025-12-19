@@ -1,6 +1,7 @@
 from grapp.util.filter import (
     grg_save_freq,
     grg_save_mut_filter,
+    grg_save_populations,
     multi_grg_save_mut_filter,
 )
 from grapp.util.simple import allele_counts, allele_frequencies
@@ -88,6 +89,22 @@ class TestFilter(unittest.TestCase):
         single_result = pygrgl.load_immutable_grg(test_filename)
         merged_result = pygrgl.load_immutable_grg(merged_file)
         self.assertEqual(single_result.num_mutations, merged_result.num_mutations)
+
+    def test_pop_filter(self):
+        grg = pygrgl.MutableGRG(10, 1)  # 10 samples, ploidy=1
+        grg.add_population("POP1")
+        grg.add_population("POP2")
+        for i in range(10):
+            if i % 2 == 0:
+                grg.set_population_id(i, 0)
+            else:
+                grg.set_population_id(i, 1)
+        filename = "test.pop_filter.grg"
+        pygrgl.save_grg(grg, filename)
+        filter_file = "test.pop_filter.POP2.grg"
+        grg_save_populations(filename, filter_file, ["POP2"])
+        grg = pygrgl.load_immutable_grg(filter_file)
+        self.assertEqual(grg.num_samples, 5)
 
     @classmethod
     def tearDownClass(cls):

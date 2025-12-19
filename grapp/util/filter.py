@@ -15,6 +15,7 @@ def grg_save_individuals(
     out_filename: str,
     individual_ids: List[str],
     allow_extra: bool = False,
+    verbose: bool = False,
 ):
     """
     Save a GRG, keeping only the individuals with the IDs given in the list.
@@ -45,6 +46,8 @@ def grg_save_individuals(
         raise UserInputError(
             f"Found individuals that were not in the GRG: {','.join(id_set)}"
         )
+    if verbose:
+        print(f"Keeping {len(sample_nodes)} haplotypes")
     pygrgl.save_subset(
         grg,
         out_filename,
@@ -57,6 +60,7 @@ def grg_save_samples(
     grg_or_filename: Union[pygrgl.GRG, str],
     out_filename: str,
     sample_nodes: List[int],
+    verbose: bool = False,
 ):
     """
     Save a GRG, keeping only the haploid samples corresponding to the NodeIDs
@@ -80,12 +84,59 @@ def grg_save_samples(
         raise UserInputError(
             "One or more input samples were invalid (not present in the GRG)"
         )
+    if verbose:
+        print(f"Keeping {len(sample_nodes)} haplotypes")
     pygrgl.save_subset(
         grg,
         out_filename,
         pygrgl.TraversalDirection.UP,
         sample_nodes,
     )
+
+
+def grg_save_populations(
+    grg_or_filename: Union[pygrgl.GRG, str],
+    out_filename: str,
+    populations: List[str],
+    allow_extra: bool = False,
+    verbose: bool = False,
+):
+    """
+    Save a GRG, keeping only the samples with populations matching the given population list.
+
+    :param grg_or_filename: Either a pygrgl.GRG object, or the filename of a GRG.
+    :type grg_or_filename: Union[pygrgl.GRG, str]
+    :param out_filename: The new GRG file to create.
+    :type out_filename: str
+    :param populations: List of population names to be kept.
+    :type populations: List[str]
+    :param allow_extra: When False, throw an exception if populations contains
+        any identifier not found in the GRG. Default: False.
+    :type allow_extra: bool
+    """
+    if isinstance(grg_or_filename, str):
+        grg = pygrgl.load_immutable_grg(grg_or_filename, load_up_edges=True)
+    else:
+        grg = grg_or_filename
+    grg_pops = grg.get_populations()
+    if not grg_pops:
+        raise UserInputError(
+            "Cannot filter by population when GRG has no population data"
+        )
+    pop_indices = set()
+    for pop in populations:
+        try:
+            pop_indices.add(grg_pops.index(pop))
+        except ValueError:
+            if not allow_extra:
+                raise UserInputError(
+                    f"Population matching '{pop}' not found; use allow_extra to ignore"
+                )
+    keep_samples = []
+    for i in range(grg.num_samples):
+        if grg.get_population_id(i) in pop_indices:
+            keep_samples.append(i)
+    return grg_save_samples(grg, out_filename, keep_samples, verbose=verbose)
 
 
 def grg_save_range(
