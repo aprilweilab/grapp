@@ -118,7 +118,7 @@ class SciPyXTXOperator(LinearOperator):
     centered at the mean, so it is not quite the covariance matrix.
 
     Can perform the operation :math:`X^T \\times X \\times A` (_matmat) or
-    :math:`X \\times X \\times \overrightarrow{v}` (_matvec).
+    :math:`X^T \\times X \\times \overrightarrow{v}` (_matvec).
 
     :param grg: The GRG the operator will multiply against.
     :type grg: pygrgl.GRG
@@ -162,14 +162,66 @@ class SciPyXTXOperator(LinearOperator):
         return self._matmat(other_matrix)
 
     def _matvec(self, vect):
-        # Assume direction == UP, then we are operating on X. Given this, we have X: NxM and
-        # the input vector must be of length M.
         vect = numpy.array([vect]).T  # Column vector (Mx1)
         return self._matmat(vect)
 
     def _rmatvec(self, vect):
-        # Assume direction == UP, then we are operating on X^T for rmatvec. Given this, we
-        # have X^T: MxN and the input vector must be of length N.
+        vect = numpy.array([vect]).T  # Column vector (Nx1)
+        return self._rmatmat(vect)
+
+
+class SciPyXXTOperator(LinearOperator):
+    """
+    A scipy.sparse.linalg.LinearOperator on the matrix :math:`XX^T` represented by the GRG.
+    This is for the non-standardized matrix, which just contains discrete allele counts.
+
+    Can perform the operation :math:`X \\times X^T \\times A` (_matmat) or
+    :math:`X \\times X^T \\times \overrightarrow{v}` (_matvec).
+
+    :param grg: The GRG the operator will multiply against.
+    :type grg: pygrgl.GRG
+    :param dtype: The numpy.dtype to use.
+    :type dtype: TypeAlias
+    :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
+        genotype matrix. Default: False.
+    :type haploid: bool
+    :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
+        mutation_filter) instead of NxM. Default: empty filter.
+    :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
+    """
+
+    def __init__(
+        self,
+        grg: pygrgl.GRG,
+        dtype: TypeAlias = numpy.float64,
+        haploid: bool = False,
+        mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
+    ):
+        if isinstance(mutation_filter, numpy.ndarray):
+            mutation_filter = mutation_filter.tolist()
+        sample_count = grg.num_samples if haploid else grg.num_individuals
+        xxt_shape = (sample_count, sample_count)
+        super().__init__(dtype=dtype, shape=xxt_shape)
+        self.x_op = SciPyXOperator(
+            grg,
+            _UP,
+            dtype=dtype,
+            haploid=haploid,
+            mutation_filter=mutation_filter,
+        )
+
+    def _matmat(self, other_matrix):
+        D = self.x_op._rmatmat(other_matrix)
+        return self.x_op._matmat(D)
+
+    def _rmatmat(self, other_matrix):
+        return self._matmat(other_matrix)
+
+    def _matvec(self, vect):
+        vect = numpy.array([vect]).T  # Column vector (Nx1)
+        return self._matmat(vect)
+
+    def _rmatvec(self, vect):
         vect = numpy.array([vect]).T  # Column vector (Nx1)
         return self._rmatmat(vect)
 
