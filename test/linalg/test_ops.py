@@ -4,6 +4,7 @@ from grapp.linalg.ops_scipy import (
     MultiSciPyXOperator,
     MultiSciPyXTXOperator,
     SciPyStdXOperator,
+    SciPyXXTOperator,
     SciPyStdXTXOperator,
     SciPyXOperator,
     SciPyXTXOperator,
@@ -60,6 +61,24 @@ class TestLinearOperators(unittest.TestCase):
         )
         grg_hap_result = grg_hap_op._matmat(random_input)
         numpy.testing.assert_allclose(grg_hap_result, numpy_hap_result)
+
+    def test_XXT(self):
+        K = 20  # Use 20 random vectors for test.
+        random_input = numpy.random.standard_normal((K, self.grg.num_samples)).T
+
+        X_hap = grg2X(self.grg, diploid=False)
+        numpy_hap_result = numpy.matmul(X_hap @ X_hap.T, random_input)
+
+        grg_hap_op = SciPyXXTOperator(self.grg, haploid=True)
+        grg_hap_result = grg_hap_op._matmat(random_input)
+        numpy.testing.assert_allclose(grg_hap_result, numpy_hap_result)
+
+        random_input = numpy.random.standard_normal((K, self.grg.num_individuals)).T
+        X_dip = grg2X(self.grg, diploid=True)
+        numpy_dip_result = numpy.matmul(X_dip @ X_dip.T, random_input)
+        grg_dip_op = SciPyXXTOperator(self.grg, haploid=False)
+        grg_dip_result = grg_dip_op._matmat(random_input)
+        numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
 
     def test_standardized_op_X(self):
         K = 20  # Use 20 random vectors for test.
