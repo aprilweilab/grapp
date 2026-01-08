@@ -31,7 +31,14 @@ class TestPCA(unittest.TestCase):
         X_stand = standardize_X(grg2X(self.grg, diploid=True))
 
         D = X_stand.T @ X_stand
-        evals, evects = scipy_eigs(D, k=15)
+        evals, evects = scipy_eigs(D, k=15, which="LR")
+
+        # grg_eigs does this for us, because scipy _does not guarantee_ that these are in the
+        # correct order.
+        ordered = numpy.argsort(evals)
+        evals = evals[ordered]
+        evects = evects[:, ordered]
+
         grg_evals, grg_evects = grg_eigs(MatrixSelection.XTX, self.grg, 15)
         numpy.testing.assert_array_almost_equal(evals, grg_evals, 3)
         for ev, gev in zip(evects.T, grg_evects.T):

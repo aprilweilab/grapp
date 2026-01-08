@@ -76,7 +76,10 @@ def eigs(
             operator = _SciPyStdXTXOperator(grg, freqs, haploid=haploid)
         else:
             operator = _SciPyXTXOperator(grg, freqs, haploid=haploid)
-    eigen_values, eigen_vectors = _scipy_eigs(operator, k=first_k)
+    eigen_values, eigen_vectors = _scipy_eigs(operator, k=first_k, which="LR")
+    ordered = numpy.argsort(eigen_values)
+    eigen_values = eigen_values[ordered]
+    eigen_vectors = eigen_vectors[:, ordered]
     return eigen_values, eigen_vectors
 
 
@@ -98,7 +101,10 @@ def get_eig_pcs(grg: pygrgl.GRG, first_k: int) -> Tuple[NDArray, NDArray, NDArra
 
     op = _SciPyStdXTXOperator(grg, freqs, haploid=False)
 
-    eigen_values, eigen_vectors = _scipy_eigs(op, k=first_k)
+    eigen_values, eigen_vectors = _scipy_eigs(op, k=first_k, which="LR")
+    ordered = numpy.argsort(eigen_values)
+    eigen_values = eigen_values[ordered]
+    eigen_vectors = eigen_vectors[:, ordered]
 
     # Standardize all k eigenvectors at once: for later
     eigvects_f64 = eigen_vectors.real.astype(numpy.float64)
