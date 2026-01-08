@@ -27,6 +27,23 @@ class MatrixSelection(Enum):
     XTX = 3  # The MxM covariance or correlation matrix
 
 
+def sort_by_eigvalues(
+    eigen_values: numpy.typing.NDArray, eigen_vectors: numpy.typing.NDArray
+):
+    """
+    Reorder the eigen value and vector arrays so that they are in descending order of the corresponding
+    eigen value.
+
+    :param eigen_values: The vector of eigen values, of length k.
+    :type eigen_values: numpy.typing.NDArray
+    :param eigen_vectors: The matrix of eigen vectors, with k columns.
+    :type eigen_vectors: numpy.typing.NDArray
+    """
+    ordered = numpy.flip(numpy.argsort(eigen_values))
+    eigen_values[...] = eigen_values[ordered]
+    eigen_vectors[...] = eigen_vectors[:, ordered]
+
+
 def eigs(
     matrix: MatrixSelection,
     grg: pygrgl.GRG,
@@ -77,9 +94,7 @@ def eigs(
         else:
             operator = _SciPyXTXOperator(grg, freqs, haploid=haploid)
     eigen_values, eigen_vectors = _scipy_eigs(operator, k=first_k, which="LR")
-    ordered = numpy.argsort(eigen_values)
-    eigen_values = eigen_values[ordered]
-    eigen_vectors = eigen_vectors[:, ordered]
+    sort_by_eigvalues(eigen_values, eigen_vectors)
     return eigen_values, eigen_vectors
 
 
@@ -102,9 +117,7 @@ def get_eig_pcs(grg: pygrgl.GRG, first_k: int) -> Tuple[NDArray, NDArray, NDArra
     op = _SciPyStdXTXOperator(grg, freqs, haploid=False)
 
     eigen_values, eigen_vectors = _scipy_eigs(op, k=first_k, which="LR")
-    ordered = numpy.argsort(eigen_values)
-    eigen_values = eigen_values[ordered]
-    eigen_vectors = eigen_vectors[:, ordered]
+    sort_by_eigvalues(eigen_values, eigen_vectors)
 
     # Standardize all k eigenvectors at once: for later
     eigvects_f64 = eigen_vectors.real.astype(numpy.float64)
