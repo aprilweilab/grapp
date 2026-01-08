@@ -2,10 +2,10 @@ import sys
 import unittest
 import os
 import pandas as pd
-import subprocess
 import pygrgl
-from grapp.assoc import linear_assoc_no_covar, read_pheno
-from io import StringIO
+import numpy
+from grapp.assoc import linear_assoc_no_covar, linear_assoc_covar, read_pheno
+from grapp.linalg import PCs
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(THIS_DIR, ".."))
@@ -22,9 +22,13 @@ class TestGWAS(unittest.TestCase):
         cls.grg = pygrgl.load_immutable_grg(cls.grg_filename, load_up_edges=False)
         cls.pheno_path = os.path.join(INPUT_DIR, "phenotypes.txt")
         assert os.path.isfile(cls.pheno_path)
-        cls.baseline_path = os.path.join(INPUT_DIR, "gwas.baseline.txt")
-        with open(cls.baseline_path) as fin:
-            cls.gwas = pd.read_csv(fin, delim_whitespace=True)
+
+        baseline_path = os.path.join(INPUT_DIR, "gwas.baseline.txt")
+        cls.gwas = pd.read_csv(baseline_path, delimiter="\t")
+
+        covar_baseline_path = os.path.join(INPUT_DIR, "covar.baseline.txt")
+        cls.covar = pd.read_csv(covar_baseline_path, dtype=numpy.float64)
+
         cls.Y = read_pheno(cls.pheno_path)
 
     def test_gwas_no_covar_vs_grg(self):
@@ -55,6 +59,16 @@ class TestGWAS(unittest.TestCase):
                         f"Python: {val_py}, GRG: {val_grg}, "
                         f"abs_diff={diff}, rel_err={rel_err}"
                     )
+
+    def test_gwas_covar(self):
+        C = PCs(self.grg, 10, unitvar=False)
+        df_nonstd = linear_assoc_covar(self.grg, self.Y, C)
+        # Compare against the baseline of known "good" values.
+        numpy.testing.assert_allclose(df_nonstd, self.covar)
+
+        df_std = linear_assoc_covar(self.grg, self.Y, C, standardize=True)
+        self.assertEqual(len(df_nonstd), len(df_std))
+        self.assertEqual(self.grg.num_mutations, len(df_std))
 
     @classmethod
     def tearDownClass(cls):
