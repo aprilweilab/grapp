@@ -11,9 +11,7 @@ class UserInputError(Exception):
     pass
 
 
-def allele_counts(
-    grg: pygrgl.GRG, adjust_missing: bool = False
-) -> numpy.typing.NDArray:
+def allele_counts(grg: pygrgl.GRG) -> numpy.typing.NDArray:
     """
     Get the allele counts for the mutations in the given GRG.
 
