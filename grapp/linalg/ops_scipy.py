@@ -33,7 +33,7 @@ class SciPyXOperator(LinearOperator):
     multiplication between the GRG and a matrix or vector. This is for the non-standardized matrix, which
     just contains discrete allele counts.
 
-    Can perform the operation :math:`X \\times A` (_matmat) or :math:`X \\times \overrightarrow{v}` (_matvec).
+    Can perform the operation :math:`X \\times A` (_matmat) or :math:`X \\times \\overrightarrow{v}` (_matvec).
 
     :param grg: The GRG the operator will multiply against.
     :type grg: pygrgl.GRG
@@ -118,7 +118,7 @@ class SciPyXTXOperator(LinearOperator):
     centered at the mean, so it is not quite the covariance matrix.
 
     Can perform the operation :math:`X^T \\times X \\times A` (_matmat) or
-    :math:`X^T \\times X \\times \overrightarrow{v}` (_matvec).
+    :math:`X^T \\times X \\times \\overrightarrow{v}` (_matvec).
 
     :param grg: The GRG the operator will multiply against.
     :type grg: pygrgl.GRG
@@ -176,7 +176,7 @@ class SciPyXXTOperator(LinearOperator):
     This is for the non-standardized matrix, which just contains discrete allele counts.
 
     Can perform the operation :math:`X \\times X^T \\times A` (_matmat) or
-    :math:`X \\times X^T \\times \overrightarrow{v}` (_matvec).
+    :math:`X \\times X^T \\times \\overrightarrow{v}` (_matvec).
 
     :param grg: The GRG the operator will multiply against.
     :type grg: pygrgl.GRG
@@ -266,7 +266,7 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
     centered to the mean (based on allele frequencies) and standard devation (based on the binomial distribution
     where each individual is the result of :math:`p`, the ploidy, trials).
 
-    Can perform the operation :math:`X \\times A` (_matmat) or :math:`X \\times \overrightarrow{v}` (_matvec).
+    Can perform the operation :math:`X \\times A` (_matmat) or :math:`X \\times \\overrightarrow{v}` (_matvec).
 
     :param grg: The GRG the operator will multiply against.
     :type grg: pygrgl.GRG
@@ -386,7 +386,7 @@ class SciPyStdXTXOperator(LinearOperator):
 
     This operator performs multiplications against the correlation matrix of the genotype matrix
     underlying the GRG. Can perform the operation :math:`X^T \\times X \\times A` (_matmat) or
-    :math:`X \\times X \\times \overrightarrow{v}` (_matvec).
+    :math:`X \\times X \\times \\overrightarrow{v}` (_matvec).
 
     :param grg: The GRG the operator will multiply against.
     :type grg: pygrgl.GRG
@@ -453,7 +453,7 @@ class SciPyStdXXTOperator(LinearOperator):
 
     This operator performs multiplications against the correlation matrix of the genotype matrix
     underlying the GRG. Can perform the operation :math:`X \\times X^T \\times A` (_matmat) or
-    :math:`X \\times X^T \\times \overrightarrow{v}` (_matvec).
+    :math:`X \\times X^T \\times \\overrightarrow{v}` (_matvec).
 
     :param grg: The GRG the operator will multiply against.
     :type grg: pygrgl.GRG
