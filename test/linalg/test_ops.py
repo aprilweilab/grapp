@@ -10,12 +10,9 @@ from grapp.linalg.ops_scipy import (
     SciPyXTXOperator,
 )
 from grapp.util import allele_frequencies
-import glob
 import numpy
 import os
 import pygrgl
-import shutil
-import subprocess
 import sys
 import unittest
 
@@ -403,6 +400,44 @@ class TestLinearOperators(unittest.TestCase):
         )
         grg_dip_result = grg_op._matmat(random_sampvals)
         numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
+
+    def test_missing(self):
+        # Properties of the input data.
+        MISSING_INDIVS = 21
+        MISSING_SAMPLES = 25
+        grg_filename = construct_grg("test-200-samples.miss.igd", "test.linop.miss.grg")
+        grg = pygrgl.load_immutable_grg(grg_filename, load_up_edges=False)
+
+        # X is the explicit genotype matrix, with allele frequency used for missing items. So the
+        # only non-0,1,2 values should be missing items.
+        X = grg2X(grg, diploid=True)
+        self.assertEqual(
+            len(numpy.where((X > 0) & (X != 1) & (X != 2))[0]), MISSING_INDIVS
+        )
+
+        # Create the operator, using the allele frequencies as the mean value for each Mutation
+        freqs = allele_frequencies(grg, adjust_missing=True)
+        X_op = SciPyXOperator(grg, pygrgl.TraversalDirection.UP, miss_values=freqs)
+
+        #### UP direction (AX) ####
+        K = 7
+        rv = numpy.random.standard_normal((K, self.grg.num_individuals))
+        # Using the explicit genotype matrix vs. GRG operator should produce identical results.
+        numpy_result = rv @ X
+        grg_result = rv @ X_op
+        numpy.testing.assert_allclose(numpy_result, grg_result)
+
+        #### DOWN direction (AX^T) ####
+        rv = numpy.random.standard_normal((K, self.grg.num_mutations))
+        # Using the explicit genotype matrix vs. GRG operator should produce identical results.
+        numpy_result = rv @ X.T
+        grg_result = rv @ X_op.T
+        numpy.testing.assert_allclose(numpy_result, grg_result)
+
+        # Just a sanity check: using the non-missingness-adjusted operator should cause failure.
+        X_nomiss_op = SciPyXOperator(grg, pygrgl.TraversalDirection.UP)
+        grg_result = rv @ X_nomiss_op.T
+        self.assertFalse(numpy.allclose(numpy_result, grg_result))
 
     @classmethod
     def tearDownClass(cls):

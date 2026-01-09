@@ -1,4 +1,3 @@
-*.igd
 *.grg
 __pycache__/
 *.egg-info/

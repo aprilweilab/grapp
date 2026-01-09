@@ -45,6 +45,10 @@ class SciPyXOperator(LinearOperator):
     :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
         genotype matrix. Default: False.
     :type haploid: bool
+    :param miss_values: If non-None, must be a vector of length num_mutations, which provides a per-
+        mutation value for missingness (applied per haplotype). Usually the per-Mutation mean value
+        (e.g., missingness-adjusted allele frequency) is provided. Default: None.
+    :type miss_values: Optional[numpy.typing.NDArray]
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
         mutation_filter) instead of NxM. Default: empty filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
@@ -56,6 +60,7 @@ class SciPyXOperator(LinearOperator):
         direction: TraversalDirection,
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
+        miss_values: Optional[numpy.typing.NDArray] = None,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
     ):
         if isinstance(mutation_filter, numpy.ndarray):
@@ -71,6 +76,10 @@ class SciPyXOperator(LinearOperator):
             if mutation_filter is None
             else (self.grg_shape[0], len(self.mutation_filter))  # type: ignore
         )
+        assert (
+            miss_values is None or miss_values.ndim == 1
+        ), 'If "miss_values" is provided, it must be a vector'
+        self.miss_values = miss_values
         if self.direction == _DOWN:
             shape = _transpose_shape(shape)
         super().__init__(dtype=dtype, shape=shape)
@@ -78,6 +87,7 @@ class SciPyXOperator(LinearOperator):
     def _matmat_helper(
         self, other_matrix: numpy.typing.NDArray, mult_dir: TraversalDirection
     ):
+        kwargs = {}
         if self.mutation_filter is not None and mult_dir == _DOWN:
             A = numpy.zeros(
                 (other_matrix.shape[1], self.grg_shape[1]), dtype=other_matrix.dtype
@@ -85,12 +95,30 @@ class SciPyXOperator(LinearOperator):
             A[:, self.mutation_filter] = other_matrix.T  # type: ignore
         else:
             A = other_matrix.T
+
+        # When doing the multiplication AX^T (DOWN), we need to initialize the missingness node
+        # data values ("miss") with the input matrix * the missingness mean values per mutation.
+        use_M = self.grg.has_missing_data and self.miss_values is not None
+        if use_M:
+            if mult_dir == _DOWN:
+                M = numpy.array([self.miss_values]) * A
+            else:
+                M = numpy.zeros((A.shape[0], self.grg.num_mutations))
+            kwargs["miss"] = M
+
         result = pygrgl.matmul(
             self.grg,
             A,
             mult_dir,
             by_individual=not self.haploid,
+            **kwargs,
         )
+
+        # When doing the multiplication AX (UP), we need to adjust the final output with the
+        # missingness node data values ("miss") * the missingness mean values per mutation.
+        if mult_dir == _UP and use_M:
+            result += M * self.miss_values
+
         Y = result
         if self.mutation_filter is not None and mult_dir == _UP:
             Y = Y[:, self.mutation_filter]  # type: ignore
@@ -127,6 +155,10 @@ class SciPyXTXOperator(LinearOperator):
     :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
         genotype matrix. Default: False.
     :type haploid: bool
+    :param miss_values: If non-None, must be a vector of length num_mutations, which provides a per-
+        mutation value for missingness (applied per haplotype). Usually the per-Mutation mean value
+        (e.g., missingness-adjusted allele frequency) is provided. Default: None.
+    :type miss_values: Optional[numpy.typing.NDArray]
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
         mutation_filter) instead of NxM. Default: empty filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
@@ -137,6 +169,7 @@ class SciPyXTXOperator(LinearOperator):
         grg: pygrgl.GRG,
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
+        miss_values: Optional[numpy.typing.NDArray] = None,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
     ):
         if isinstance(mutation_filter, numpy.ndarray):
@@ -151,6 +184,7 @@ class SciPyXTXOperator(LinearOperator):
             _UP,
             dtype=dtype,
             haploid=haploid,
+            miss_values=miss_values,
             mutation_filter=mutation_filter,
         )
 
@@ -185,6 +219,10 @@ class SciPyXXTOperator(LinearOperator):
     :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
         genotype matrix. Default: False.
     :type haploid: bool
+    :param miss_values: If non-None, must be a vector of length num_mutations, which provides a per-
+        mutation value for missingness (applied per haplotype). Usually the per-Mutation mean value
+        (e.g., missingness-adjusted allele frequency) is provided. Default: None.
+    :type miss_values: Optional[numpy.typing.NDArray]
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
         mutation_filter) instead of NxM. Default: empty filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
@@ -195,6 +233,7 @@ class SciPyXXTOperator(LinearOperator):
         grg: pygrgl.GRG,
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
+        miss_values: Optional[numpy.typing.NDArray] = None,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
     ):
         if isinstance(mutation_filter, numpy.ndarray):
@@ -207,6 +246,7 @@ class SciPyXXTOperator(LinearOperator):
             _UP,
             dtype=dtype,
             haploid=haploid,
+            miss_values=miss_values,
             mutation_filter=mutation_filter,
         )
 
@@ -512,6 +552,10 @@ class MultiSciPyXOperator(LinearOperator):
     :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
         genotype matrix. Default: False.
     :type haploid: bool
+    :param miss_values: If non-None, must be a vector of length num_mutations (for all GRGs), which provides
+        a per-mutation value for missingness (applied per haplotype). Usually the per-Mutation mean value
+        (e.g., missingness-adjusted allele frequency) is provided. Default: None.
+    :type miss_values: Optional[numpy.typing.NDArray]
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
         mutation_filter) instead of NxM. Default: empty filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
@@ -524,8 +568,9 @@ class MultiSciPyXOperator(LinearOperator):
         self,
         grgs: List[pygrgl.GRG],
         direction: pygrgl.TraversalDirection,
-        dtype=numpy.float64,
+        dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
+        miss_values: Optional[numpy.typing.NDArray] = None,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
     ):
@@ -540,6 +585,7 @@ class MultiSciPyXOperator(LinearOperator):
             self.num_mutations = len(self.mutation_filter)
         self.operators = []
         num_samples = grgs[0].num_samples
+        prev_miss_start = 0
         prev_max_mut = 0
         for g in grgs:
             assert g.num_samples == num_samples, "All GRGs must use the same samples"
@@ -560,12 +606,23 @@ class MultiSciPyXOperator(LinearOperator):
                 grg_mut_filt = None
                 skip = False
             if not skip:
+                effective_muts = (
+                    len(grg_mut_filt) if grg_mut_filt is not None else g.num_mutations
+                )
+                if miss_values is not None:
+                    grg_miss_values = miss_values[
+                        prev_miss_start : prev_miss_start + effective_muts
+                    ]
+                    prev_miss_start += effective_muts
+                else:
+                    grg_miss_values = None
                 self.operators.append(
                     SciPyXOperator(
                         g,
                         direction,
                         dtype,
                         haploid=haploid,
+                        miss_values=grg_miss_values,
                         mutation_filter=grg_mut_filt,
                     )
                 )
@@ -631,6 +688,10 @@ class MultiSciPyXTXOperator(LinearOperator):
     :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
         genotype matrix. Default: False.
     :type haploid: bool
+    :param miss_values: If non-None, must be a vector of length num_mutations (for all GRGs), which provides
+        a per-mutation value for missingness (applied per haplotype). Usually the per-Mutation mean value
+        (e.g., missingness-adjusted allele frequency) is provided. Default: None.
+    :type miss_values: Optional[numpy.typing.NDArray]
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
         mutation_filter) instead of NxM. Default: empty filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
@@ -644,6 +705,7 @@ class MultiSciPyXTXOperator(LinearOperator):
         grgs: List[pygrgl.GRG],
         dtype=numpy.float64,
         haploid: bool = False,
+        miss_values: Optional[numpy.typing.NDArray] = None,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
     ):
@@ -652,6 +714,7 @@ class MultiSciPyXTXOperator(LinearOperator):
             pygrgl.TraversalDirection.UP,
             dtype=dtype,
             haploid=haploid,
+            miss_values=miss_values,
             mutation_filter=mutation_filter,
             threads=threads,
         )
@@ -704,8 +767,8 @@ class MultiSciPyStdXOperator(LinearOperator):
         grgs: List[pygrgl.GRG],
         direction: pygrgl.TraversalDirection,
         freqs: List[numpy.typing.NDArray],
+        dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
-        dtype=numpy.float64,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
     ):
@@ -827,8 +890,8 @@ class MultiSciPyStdXTXOperator(LinearOperator):
         self,
         grgs: List[pygrgl.GRG],
         freqs: List[numpy.typing.NDArray],
+        dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
-        dtype=numpy.float64,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
     ):

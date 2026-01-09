@@ -47,7 +47,7 @@ def allele_frequencies(
         kwargs = {}
         miss: Optional[Union[numpy.typing.NDArray, int]] = 0
         if adjust_missing:
-            miss = numpy.zeros(grg.num_mutations, dtype=numpy.int32)
+            miss = numpy.zeros((1, grg.num_mutations), dtype=numpy.int32)
             kwargs["miss"] = miss
         else:
             miss = None
@@ -59,6 +59,8 @@ def allele_frequencies(
         )[0]
         if miss is None:
             miss = 0
+        else:
+            miss = miss[0]
         denominator = grg.num_samples - miss
         return numpy.divide(
             counts,

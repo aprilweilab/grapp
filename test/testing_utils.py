@@ -5,6 +5,7 @@ import os
 import pygrgl
 import shutil
 import subprocess
+from grapp.util.simple import allele_frequencies
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 INPUT_DIR = os.path.join(THIS_DIR, "input")
@@ -57,6 +58,21 @@ def grg2X(grg: pygrgl.GRG, diploid: bool = False):
                         result[indiv][mut_id] += 1
                     else:
                         result[sample_id][mut_id] = 1
+    # Handle missingness afterwards for simplicity (harder to make mistakes this way). Each cell for
+    # a missing datum is filled in with f_i for mutation i (haplotypes) or 2*f_i (diploid matrix).
+    if grg.has_missing_data:
+        freqs = allele_frequencies(grg, adjust_missing=True)
+        for mut_id, mut_node, miss_node in grg.get_mutation_node_miss():
+            if miss_node != pygrgl.INVALID_NODE:
+                for sample_id in samps_below[miss_node]:
+                    if diploid:
+                        indiv = sample_id // grg.ploidy
+                        result[indiv][mut_id] += freqs[mut_id]
+                    else:
+                        assert (
+                            result[sample_id][mut_id] == 0
+                        ), f"{result[sample_id][mut_id]}"
+                        result[sample_id][mut_id] = freqs[mut_id]
     return result
 
 
