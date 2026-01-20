@@ -1,5 +1,6 @@
 import numpy
-from typing import Optional, List, TextIO
+import pandas
+from typing import Optional, List, TextIO, Union
 
 
 def numpy_to_tsv(
@@ -14,3 +15,10 @@ def numpy_to_tsv(
         print(SEP.join(column_names), file=file_obj)
     for row in matrix:
         print(SEP.join(map(str, row)), file=file_obj)
+
+
+def pandas_to_tsv(
+    file_obj: Union[TextIO, str],
+    dataframe: pandas.DataFrame,
+):
+    dataframe.to_csv(file_obj, sep="\t", index=False)

@@ -1,9 +1,11 @@
-import sys
-import unittest
+import math
+import numpy
 import os
 import pandas as pd
 import pygrgl
-import numpy
+import sys
+import unittest
+from collections import defaultdict
 from grapp.assoc import linear_assoc_no_covar, linear_assoc_covar, read_pheno
 from grapp.linalg import PCs
 
@@ -27,7 +29,7 @@ class TestGWAS(unittest.TestCase):
         cls.gwas = pd.read_csv(baseline_path, delimiter="\t")
 
         covar_baseline_path = os.path.join(INPUT_DIR, "covar.baseline.txt")
-        cls.covar = pd.read_csv(covar_baseline_path, dtype=numpy.float64)
+        cls.covar = pd.read_csv(covar_baseline_path, delimiter="\t")
 
         cls.Y = read_pheno(cls.pheno_path)
 
@@ -61,10 +63,29 @@ class TestGWAS(unittest.TestCase):
                     )
 
     def test_gwas_covar(self):
-        C = PCs(self.grg, 10, unitvar=False)
+        C = PCs(self.grg, 10, unitvar=False).to_numpy()
         df_nonstd = linear_assoc_covar(self.grg, self.Y, C)
-        # Compare against the baseline of known "good" values.
-        numpy.testing.assert_allclose(df_nonstd, self.covar)
+        # Compare against the baseline of known values. This is just a test to make sure
+        # nothing changes.
+        numpy.testing.assert_allclose(df_nonstd["BETA"], self.covar["BETA"])
+        df_nonstd_regress = linear_assoc_covar(self.grg, self.Y, C, method="regress")
+
+        qr_nans = df_nonstd["BETA"].isna().sum()
+        reg_nans = df_nonstd_regress["BETA"].isna().sum()
+        self.assertLess(abs(qr_nans - reg_nans), 10)
+
+        # These methods are not identical. But we expect them to be "pretty close", which
+        # we measure as 90% of SNPs having a relative difference of less than 0.2 between
+        # the two methods.
+        total = self.grg.num_mutations - max(qr_nans, reg_nans)
+        pretty_close = 0
+        reldiff = (df_nonstd["BETA"] - df_nonstd_regress["BETA"]).abs() / df_nonstd[
+            "BETA"
+        ]
+        for r in reldiff:
+            if not math.isnan(r) and not math.isinf(r) and r <= 0.2:
+                pretty_close += 1
+        self.assertGreater(pretty_close / total, 0.9)
 
         df_std = linear_assoc_covar(self.grg, self.Y, C, standardize=True)
         self.assertEqual(len(df_nonstd), len(df_std))

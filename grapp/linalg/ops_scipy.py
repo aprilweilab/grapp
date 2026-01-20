@@ -736,7 +736,6 @@ class MultiSciPyXTXOperator(LinearOperator):
         return self._matvec(vect)
 
 
-# FIXME this can be factored into a common base class with MultiSciPyXOperator
 class MultiSciPyStdXOperator(LinearOperator):
     """
     A scipy.sparse.linalg.LinearOperator on multiple GRGs. Same as SciPyStdXOperator, except if the input

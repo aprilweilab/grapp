@@ -3,11 +3,12 @@ import numpy
 import pandas
 import pygrgl
 import re
-from grapp.util.simple import allele_counts, allele_frequencies
+import sklearn.linear_model
+from grapp.util.simple import allele_counts
 from grapp.linalg.ops_scipy import SciPyStdXOperator, SciPyXOperator
 
 
-def read_covariates_matrix(
+def read_plink_covariates(
     covar_path: str, add_intercept: bool = True
 ) -> numpy.typing.NDArray:
     """
@@ -82,15 +83,21 @@ def read_pheno(filename: str) -> numpy.typing.NDArray:
 
 
 def linear_assoc_no_covar(
-    grg: pygrgl.GRG, Y: numpy.typing.NDArray, only_beta: bool = False
+    grg: pygrgl.GRG,
+    Y: numpy.typing.NDArray,
+    only_beta: bool = False,
+    standardize: bool = False,
 ) -> pandas.DataFrame:
     """
-    Performs regression for each mutation without adjusting for covariates.
+    Performs regression for each mutation without adjusting for covariates. Missing data is treated as the
+    mean genotype value (allele frequency for the relevant variant).
 
     :param Y: Phenotype vector of shape (n_samples,).
     :type Y: numpy.ndarray
     :param only_beta: If True, returns a DataFrame with only the BETA column.
     :type only_beta: bool
+    :param standardize: If True, standardize X and Y.
+    :type standardize: bool
     :return: A DataFrame containing statistics for each mutation:
         - POS, FREQ, BETA, B0, SE, R2, T, and P.
     :rtype: pandas.DataFrame
@@ -98,37 +105,43 @@ def linear_assoc_no_covar(
     assert grg.ploidy == 2, "GWAS is only supported on diploid individuals"
 
     with numpy.errstate(divide="ignore", invalid="ignore"):
-        freq_count = allele_counts(grg)
-        XX = pygrgl.matmul(
-            grg,
-            numpy.ones((1, grg.num_samples), dtype=numpy.int32),
-            pygrgl.TraversalDirection.UP,
-            init="xtx",
-        ).squeeze()
+        acount, miss_count = allele_counts(grg, return_missing=True)
         n = grg.num_individuals
+        if standardize:
+            # diag(X^T @ X): for any standardized matrix with N rows, the diagonal will just be N
+            XX = n - miss_count
+        else:
+            XX = pygrgl.matmul(
+                grg,
+                numpy.ones((1, grg.num_samples), dtype=numpy.int32),
+                pygrgl.TraversalDirection.UP,
+                init="xtx",
+            ).squeeze()
+        assert XX.shape == (grg.num_mutations,)
 
-        y = numpy.repeat(Y, grg.ploidy)
-        total_pheno = Y.sum()
-        yy = numpy.dot(Y, Y)
-
-        freq_count_norm = freq_count / n
-        mut_XY_count = pygrgl.dot_product(grg, y, pygrgl.TraversalDirection.UP)
+        mut_XY_count = pygrgl.matmul(
+            grg, numpy.array([Y]), pygrgl.TraversalDirection.UP, by_individual=True
+        )[0]
 
         # Vectorized regression components
-        nodeXY = mut_XY_count - freq_count_norm * total_pheno
-        nodeXX = XX - freq_count * freq_count_norm
+        n_j = n - miss_count
+        afreq = acount / n_j
+        total_pheno = Y.sum()
+        nodeXY = mut_XY_count - n_j * afreq * (total_pheno / n)
+        nodeXX = XX - acount * afreq
         beta = nodeXY / nodeXX
         if only_beta:
             return pandas.DataFrame({"BETA": beta})
 
-        b0 = total_pheno / n - beta * freq_count_norm
+        b0 = total_pheno / n - beta * afreq
 
+        yy = numpy.dot(Y, Y)
         sse = (
             yy
             - 2 * b0 * total_pheno
             - 2 * beta * mut_XY_count
             + n * b0**2
-            + 2 * b0 * beta * freq_count
+            + 2 * b0 * beta * acount
             + beta**2 * XX
         )
 
@@ -149,7 +162,7 @@ def linear_assoc_no_covar(
         df = pandas.DataFrame(
             {
                 "POS": positions,
-                "FREQ": freq_count,
+                "FREQ": acount,
                 "BETA": beta,
                 "B0": b0,
                 "SE": se,
@@ -169,15 +182,16 @@ def linear_assoc_covar(
     only_beta: bool = False,
     hide_covars: bool = True,
     standardize: bool = False,
+    method: str = "QR",
 ) -> pandas.DataFrame:
     """
-    Performs regression for each mutation with covariate adjustment.
+    Performs regression for each mutation with covariate adjustment. Missing data is treated as the
+    mean genotype value (allele frequency for the relevant variant).
     Uses QR decomposition to project out covariate effects from the phenotype and genotype vectors.
 
     :param Y: Phenotype vector of shape (n_samples,).
     :type Y: numpy.ndarray
-    :param C: Covariate matrix of shape (n_samples, n_covariates).
-            Should include intercept.
+    :param C: Covariate matrix of shape (n_samples, n_covariates). Should include intercept.
     :type C: numpy.ndarray
     :param only_beta: If True, returns only the BETA column in the output.
     :type only_beta: bool
@@ -185,11 +199,23 @@ def linear_assoc_covar(
     :type hide_covars: bool
     :param standardize: If True, standardize X and Y (after adjusting for covariates).
     :type standardize: bool
+    :param method: Either "QR" (default) or "regress". "QR" uses QR decomposition to adjust both :math:`X` and
+        :math:`Y` for covariates (:math:`C`), but if standardize=True then it assumes that :math:`X` and :math:`C`
+        are independent (the more correlated they are, the less "standardized" the result will be). "regress" uses
+        linear regression between :math:`Y` and :math:`C` (to get :math:`B_c`), and then performs GWAS against
+        :math:`Y'` (:math:`Y' = Y - C \\times B_c`).
+    :type method: str
     :return: A DataFrame containing at least BETA, SE, T, and P columns.
             If hide_covars is False, also includes GAMMA columns.
     :rtype: pandas.DataFrame
     """
     assert grg.ploidy == 2, "GWAS is only supported on diploid individuals"
+    assert method in ("QR", "regress"), 'Invalid "method" parameter'
+
+    if method == "regress":
+        model = sklearn.linear_model.LinearRegression()
+        regression = model.fit(C, Y)
+        return linear_assoc_no_covar(grg, Y - C @ regression.coef_, only_beta=only_beta)
 
     with numpy.errstate(divide="ignore", invalid="ignore"):
         Q, R = numpy.linalg.qr(C)
@@ -199,15 +225,18 @@ def linear_assoc_covar(
         if standardize:
             Yadj = (Yadj - numpy.mean(Yadj, axis=0)) / numpy.std(Yadj, axis=0)
 
+        acount, miss_count = allele_counts(grg, return_missing=True)
+        n = grg.num_individuals
+        n_j = n - miss_count
+        afreq = acount / n_j
+
         # We perform the multiplications in the same way, but with different operators depending
         # on whether we are using the standardized genotype matrix.
         if standardize:
             # diag(X^T @ X): for any standardized matrix with N rows, the diagonal will just be N
-            XX = numpy.full(grg.num_mutations, grg.num_individuals)
-
-            freqs = allele_frequencies(grg)
+            XX = n_j
             X_op = SciPyStdXOperator(
-                grg, pygrgl.TraversalDirection.UP, freqs, haploid=False
+                grg, pygrgl.TraversalDirection.UP, afreq, haploid=False
             )
         else:
             # diag(X^T @ X): for the non-standardized genotype matrix, GRG has a special initialization
@@ -219,7 +248,9 @@ def linear_assoc_covar(
                 init="xtx",
             ).squeeze()
 
-            X_op = SciPyXOperator(grg, pygrgl.TraversalDirection.UP, haploid=False)
+            X_op = SciPyXOperator(
+                grg, pygrgl.TraversalDirection.UP, haploid=False, miss_values=afreq
+            )
 
         beta = numpy.zeros(XX.size)
 
@@ -236,7 +267,10 @@ def linear_assoc_covar(
         # Compute (Xadj^TYadj)
         xadjTyadj = Yadj @ X_op
 
-        beta = xadjTyadj / xadjTxadj
+        total_pheno = Y.sum()
+        nodeXY = xadjTyadj - n_j * afreq * (total_pheno / n)
+        nodeXX = xadjTxadj - acount * afreq
+        beta = nodeXY / nodeXX
         if only_beta:
             return pandas.DataFrame({"BETA": beta})
 
@@ -260,8 +294,14 @@ def linear_assoc_covar(
             for j in range(Q.shape[1]):
                 gamma_cols[f"GAMMA_{j}"] = gammas[:, j]
 
+        positions = list(
+            map(lambda i: grg.get_mutation_by_id(i).position, range(grg.num_mutations))
+        )
+
         # Build output DataFrame
         df_data = {
+            "POS": positions,
+            "FREQ": acount,
             "BETA": beta,
             "SE": se,
             "T": t_vals,

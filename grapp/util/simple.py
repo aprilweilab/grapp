@@ -2,7 +2,7 @@
 Simple utility functions.
 """
 
-from typing import Union, Optional
+from typing import Union, Tuple
 import pygrgl
 import numpy
 
@@ -11,21 +11,37 @@ class UserInputError(Exception):
     pass
 
 
-def allele_counts(grg: pygrgl.GRG) -> numpy.typing.NDArray:
+def allele_counts(
+    grg: pygrgl.GRG, return_missing: bool = False
+) -> Union[numpy.typing.NDArray, Tuple[numpy.typing.NDArray, numpy.typing.NDArray]]:
     """
     Get the allele counts for the mutations in the given GRG.
 
     :param grg: The GRG.
     :type grg: pygrgl.GRG
+    :param return_missing: Return two arrays: the allele counts, and the missingness counts.
+    :type return_missing: bool
     :return: A vector of length grg.num_mutations, containing allele counts
         indexed by MutationID.
     :rtype: numpy.ndarray
     """
-    return pygrgl.matmul(
+    kwargs = {}
+    if return_missing:
+        miss_counts = numpy.zeros((1, grg.num_mutations), dtype=numpy.int32)
+        kwargs["miss"] = miss_counts
+    else:
+        miss_counts = None
+    acounts = pygrgl.matmul(
         grg,
         numpy.ones((1, grg.num_samples), dtype=numpy.int32),
         pygrgl.TraversalDirection.UP,
+        **kwargs,
     )[0]
+    if miss_counts is not None:
+        miss_counts = miss_counts[0]
+        assert miss_counts is not None
+        return acounts, miss_counts
+    return acounts
 
 
 def allele_frequencies(
@@ -44,27 +60,15 @@ def allele_frequencies(
     :rtype: numpy.ndarray
     """
     with numpy.errstate(divide="raise"):
-        kwargs = {}
-        miss: Optional[Union[numpy.typing.NDArray, int]] = 0
         if adjust_missing:
-            miss = numpy.zeros((1, grg.num_mutations), dtype=numpy.int32)
-            kwargs["miss"] = miss
+            acounts, miss_counts = allele_counts(grg, return_missing=True)
         else:
-            miss = None
-        counts = pygrgl.matmul(
-            grg,
-            numpy.ones((1, grg.num_samples), dtype=numpy.int32),
-            pygrgl.TraversalDirection.UP,
-            **kwargs,
-        )[0]
-        if miss is None:
-            miss = 0
-        else:
-            miss = miss[0]
-        denominator = grg.num_samples - miss
+            acounts = allele_counts(grg, return_missing=False)
+            miss_counts = 0
+        denominator = grg.num_samples - miss_counts
         return numpy.divide(
-            counts,
+            acounts,
             denominator,
-            out=numpy.zeros(counts.shape, dtype=numpy.float64),
+            out=numpy.zeros(acounts.shape, dtype=numpy.float64),
             where=(denominator != 0),
         )
