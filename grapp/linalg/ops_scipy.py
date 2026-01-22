@@ -284,12 +284,14 @@ class _SciPyStandardizedOperator(LinearOperator):
         self.sample_count = grg.num_samples if haploid else grg.num_individuals
 
         # TODO: there might be other normalization approachs besides this. For example, FlashPCA2 has different
-        # options for what to use (this is the P-trial binomial).
+        # options for what to use (this is the P-trial binomial, where P is either ploidy or 1 if haploid is set
+        # to True).
         raw = self.mult_const * self.freqs * (1.0 - self.freqs)
 
         # Two versions of sigma, the second flips 0 values (which means the frequency was
         # either 1 or 0 for the mutation) to 1 values so we can use it for division.
-        original_sigma = numpy.sqrt(raw)
+        with numpy.errstate(invalid="raise"):
+            original_sigma = numpy.sqrt(raw)
         self.sigma_corrected = numpy.where(
             original_sigma == 0,
             1,

@@ -1,11 +1,24 @@
+from grapp.linalg.ops_scipy import SciPyStdXOperator, SciPyXOperator
+from grapp.util.simple import allele_counts
 from scipy.stats import t as t_distribution
+import math
 import numpy
 import pandas
 import pygrgl
 import re
 import sklearn.linear_model
-from grapp.util.simple import allele_counts
-from grapp.linalg.ops_scipy import SciPyStdXOperator, SciPyXOperator
+
+
+def _div_or_default(a, b, d):
+    """
+    y = a / b, unless b_i is 0, then y_i will be set to 0.
+
+    :param a: Numerator
+    :param b: Denominator
+    :param d: Default value for when denominator is 0.
+    """
+    result = numpy.full(b.shape, d)
+    return numpy.divide(a, b, out=result, where=(b != 0))
 
 
 def read_plink_covariates(
@@ -99,80 +112,82 @@ def linear_assoc_no_covar(
     :param standardize: If True, standardize X and Y.
     :type standardize: bool
     :return: A DataFrame containing statistics for each mutation:
-        - POS, FREQ, BETA, B0, SE, R2, T, and P.
+        - POS, COUNT, BETA, B0, SE, R2, T, and P.
     :rtype: pandas.DataFrame
     """
-    assert grg.ploidy == 2, "GWAS is only supported on diploid individuals"
+    PLOIDY = 2
+    assert grg.ploidy == PLOIDY, "GWAS is only supported on diploid individuals"
+    assert not numpy.all(numpy.isnan(Y)), "Error: phenotype is all NaN (missing)"
 
-    with numpy.errstate(divide="ignore", invalid="ignore"):
-        acount, miss_count = allele_counts(grg, return_missing=True)
-        n = grg.num_individuals
-        if standardize:
-            # diag(X^T @ X): for any standardized matrix with N rows, the diagonal will just be N
-            XX = n - miss_count
-        else:
-            XX = pygrgl.matmul(
-                grg,
-                numpy.ones((1, grg.num_samples), dtype=numpy.int32),
-                pygrgl.TraversalDirection.UP,
-                init="xtx",
-            ).squeeze()
-        assert XX.shape == (grg.num_mutations,)
+    acount, miss_count = allele_counts(grg, return_missing=True)
+    n = grg.num_individuals
+    n_j = n - (miss_count / PLOIDY)
+    assert numpy.all(n_j >= 0.0)
+    if standardize:
+        # diag(X^T @ X): for any standardized matrix with N rows, the diagonal will just be N
+        XX = n_j
+    else:
+        XX = pygrgl.matmul(
+            grg,
+            numpy.ones((1, grg.num_samples), dtype=numpy.int32),
+            pygrgl.TraversalDirection.UP,
+            init="xtx",
+        ).squeeze()
+    assert XX.shape == (grg.num_mutations,)
 
-        mut_XY_count = pygrgl.matmul(
-            grg, numpy.array([Y]), pygrgl.TraversalDirection.UP, by_individual=True
-        )[0]
+    mut_XY_count = pygrgl.matmul(
+        grg, numpy.array([Y]), pygrgl.TraversalDirection.UP, by_individual=True
+    )[0]
 
-        # Vectorized regression components
-        n_j = n - miss_count
-        afreq = acount / n_j
-        total_pheno = Y.sum()
-        nodeXY = mut_XY_count - n_j * afreq * (total_pheno / n)
-        nodeXX = XX - acount * afreq
-        beta = nodeXY / nodeXX
-        if only_beta:
-            return pandas.DataFrame({"BETA": beta})
+    # Vectorized regression components
+    afreq_diploid = _div_or_default(acount, n_j, 0.0)
+    total_pheno = Y.sum()
+    nodeXY = mut_XY_count - n_j * afreq_diploid * (total_pheno / n)
+    nodeXX = XX - acount * afreq_diploid
+    beta = _div_or_default(nodeXY, nodeXX, math.nan)
+    if only_beta:
+        return pandas.DataFrame({"BETA": beta})
 
-        b0 = total_pheno / n - beta * afreq
+    b0 = total_pheno / n - beta * afreq_diploid
 
-        yy = numpy.dot(Y, Y)
-        sse = (
-            yy
-            - 2 * b0 * total_pheno
-            - 2 * beta * mut_XY_count
-            + n * b0**2
-            + 2 * b0 * beta * acount
-            + beta**2 * XX
-        )
+    yy = numpy.dot(Y, Y)
+    sse = (
+        yy
+        - 2 * b0 * total_pheno
+        - 2 * beta * mut_XY_count
+        + n * b0**2
+        + 2 * b0 * beta * acount
+        + beta**2 * XX
+    )
 
-        se = numpy.sqrt(numpy.abs(sse / ((n - 2) * nodeXX)))
-        t_stat = beta / se
+    se = numpy.sqrt(numpy.abs(sse / ((n - 2) * nodeXX)))
+    t_stat = beta / se
 
-        s_tot = yy - (total_pheno**2) / n
-        r2 = 1 - sse / s_tot
+    s_tot = yy - (total_pheno**2) / n
+    r2 = 1 - sse / s_tot
 
-        cdf_vals = t_distribution.cdf(t_stat, df=n - 2)
-        p_val = 2 * numpy.where(t_stat > 0, 1 - cdf_vals, cdf_vals)
+    cdf_vals = t_distribution.cdf(t_stat, df=n - 2)
+    p_val = 2 * numpy.where(t_stat > 0, 1 - cdf_vals, cdf_vals)
 
-        positions = list(
-            map(lambda i: grg.get_mutation_by_id(i).position, range(grg.num_mutations))
-        )
+    positions = list(
+        map(lambda i: grg.get_mutation_by_id(i).position, range(grg.num_mutations))
+    )
 
-        # Build DataFrame
-        df = pandas.DataFrame(
-            {
-                "POS": positions,
-                "FREQ": acount,
-                "BETA": beta,
-                "B0": b0,
-                "SE": se,
-                "R2": r2,
-                "T": t_stat,
-                "P": p_val,
-            }
-        )
+    # Build DataFrame
+    df = pandas.DataFrame(
+        {
+            "POS": positions,
+            "COUNT": acount,
+            "BETA": beta,
+            "B0": b0,
+            "SE": se,
+            "R2": r2,
+            "T": t_stat,
+            "P": p_val,
+        }
+    )
 
-        return df
+    return df
 
 
 def linear_assoc_covar(
@@ -209,7 +224,8 @@ def linear_assoc_covar(
             If hide_covars is False, also includes GAMMA columns.
     :rtype: pandas.DataFrame
     """
-    assert grg.ploidy == 2, "GWAS is only supported on diploid individuals"
+    PLOIDY = 2
+    assert grg.ploidy == PLOIDY, "GWAS is only supported on diploid individuals"
     assert method in ("QR", "regress"), 'Invalid "method" parameter'
 
     if method == "regress":
@@ -217,95 +233,98 @@ def linear_assoc_covar(
         regression = model.fit(C, Y)
         return linear_assoc_no_covar(grg, Y - C @ regression.coef_, only_beta=only_beta)
 
-    with numpy.errstate(divide="ignore", invalid="ignore"):
-        Q, R = numpy.linalg.qr(C)
+    Q, R = numpy.linalg.qr(C)
 
-        # Compute Y adj
-        Yadj = Y - Q @ (Q.T @ Y)
-        if standardize:
-            Yadj = (Yadj - numpy.mean(Yadj, axis=0)) / numpy.std(Yadj, axis=0)
+    # Compute Y adj
+    Yadj = Y - Q @ (Q.T @ Y)
+    if standardize:
+        Yadj = (Yadj - numpy.mean(Yadj, axis=0)) / numpy.std(Yadj, axis=0)
 
-        acount, miss_count = allele_counts(grg, return_missing=True)
-        n = grg.num_individuals
-        n_j = n - miss_count
-        afreq = acount / n_j
+    acount, miss_count = allele_counts(grg, return_missing=True)
+    n = grg.num_individuals
+    n_j = n - (miss_count / PLOIDY)
+    assert numpy.all(n_j >= 0.0)
+    afreq_diploid = _div_or_default(acount, n_j, 0.0)
 
-        # We perform the multiplications in the same way, but with different operators depending
-        # on whether we are using the standardized genotype matrix.
-        if standardize:
-            # diag(X^T @ X): for any standardized matrix with N rows, the diagonal will just be N
-            XX = n_j
-            X_op = SciPyStdXOperator(
-                grg, pygrgl.TraversalDirection.UP, afreq, haploid=False
-            )
-        else:
-            # diag(X^T @ X): for the non-standardized genotype matrix, GRG has a special initialization
-            # method "xtx" which uses coalescence information to compute the diagonal in a single pass
-            XX = pygrgl.matmul(
-                grg,
-                numpy.ones((1, grg.num_samples), dtype=numpy.int32),
-                pygrgl.TraversalDirection.UP,
-                init="xtx",
-            ).squeeze()
+    # We perform the multiplications in the same way, but with different operators depending
+    # on whether we are using the standardized genotype matrix.
+    if standardize:
+        # diag(X^T @ X): for any standardized matrix with N rows, the diagonal will just be N
+        XX = n_j
+        X_op = SciPyStdXOperator(
+            grg, pygrgl.TraversalDirection.UP, afreq_diploid / PLOIDY, haploid=False
+        )
+    else:
+        # diag(X^T @ X): for the non-standardized genotype matrix, GRG has a special initialization
+        # method "xtx" which uses coalescence information to compute the diagonal in a single pass
+        XX = pygrgl.matmul(
+            grg,
+            numpy.ones((1, grg.num_samples), dtype=numpy.int32),
+            pygrgl.TraversalDirection.UP,
+            init="xtx",
+        ).squeeze()
 
-            X_op = SciPyXOperator(
-                grg, pygrgl.TraversalDirection.UP, haploid=False, miss_values=afreq
-            )
-
-        beta = numpy.zeros(XX.size)
-
-        # G^TQ
-        ###Computes G^TQ where Q's rows are duplicated so we can get X^TQ
-        XtQ = X_op.T @ Q
-
-        # Diagonal of (X^TQ)(X^TQ)^T
-        diagonal = (XtQ * XtQ).sum(axis=1)
-
-        # Xadj^TXadj
-        xadjTxadj = XX - diagonal
-
-        # Compute (Xadj^TYadj)
-        xadjTyadj = Yadj @ X_op
-
-        total_pheno = Y.sum()
-        nodeXY = xadjTyadj - n_j * afreq * (total_pheno / n)
-        nodeXX = xadjTxadj - acount * afreq
-        beta = nodeXY / nodeXX
-        if only_beta:
-            return pandas.DataFrame({"BETA": beta})
-
-        df = Yadj.shape[0] - Q.shape[1] - 1
-        YY = Yadj.T @ Yadj
-
-        SSE = YY - (xadjTyadj**2) / xadjTxadj
-        se = numpy.sqrt(numpy.abs(SSE / (df * xadjTxadj)))
-        t_vals = beta / se
-
-        cdf_vals = t_distribution.cdf(t_vals, df)
-        p = 2 * numpy.where(t_vals > 0, 1 - cdf_vals, cdf_vals)
-
-        # Optional GAMMA calculation
-        gamma_cols = {}
-        if not hide_covars:
-            QtY = Q.T @ Y
-            gamma0 = numpy.linalg.solve(R, QtY)
-            corrections = numpy.linalg.solve(R, XtQ.T).T  # (num_snps, num_covars)
-            gammas = gamma0 - beta[:, None] * corrections
-            for j in range(Q.shape[1]):
-                gamma_cols[f"GAMMA_{j}"] = gammas[:, j]
-
-        positions = list(
-            map(lambda i: grg.get_mutation_by_id(i).position, range(grg.num_mutations))
+        X_op = SciPyXOperator(
+            grg,
+            pygrgl.TraversalDirection.UP,
+            haploid=False,
+            miss_values=afreq_diploid / PLOIDY,
         )
 
-        # Build output DataFrame
-        df_data = {
-            "POS": positions,
-            "FREQ": acount,
-            "BETA": beta,
-            "SE": se,
-            "T": t_vals,
-            "P": p,
-        }
-        df_data.update(gamma_cols)
-        return pandas.DataFrame(df_data)
+    beta = numpy.zeros(XX.size)
+
+    # G^TQ
+    ###Computes G^TQ where Q's rows are duplicated so we can get X^TQ
+    XtQ = X_op.T @ Q
+
+    # Diagonal of (X^TQ)(X^TQ)^T
+    diagonal = (XtQ * XtQ).sum(axis=1)
+
+    # Xadj^TXadj
+    xadjTxadj = XX - diagonal
+
+    # Compute (Xadj^TYadj)
+    xadjTyadj = Yadj @ X_op
+
+    total_pheno = Y.sum()
+    nodeXY = xadjTyadj - n_j * afreq_diploid * (total_pheno / n)
+    nodeXX = xadjTxadj - acount * afreq_diploid
+    beta = _div_or_default(nodeXY, nodeXX, math.nan)
+    if only_beta:
+        return pandas.DataFrame({"BETA": beta})
+
+    df = Yadj.shape[0] - Q.shape[1] - 1
+    YY = Yadj.T @ Yadj
+
+    SSE = _div_or_default(YY - (xadjTyadj**2), xadjTxadj, math.nan)
+    se = numpy.sqrt(numpy.abs(_div_or_default(SSE, (df * xadjTxadj), math.nan)))
+    t_vals = beta / se
+
+    cdf_vals = t_distribution.cdf(t_vals, df)
+    p = 2 * numpy.where(t_vals > 0, 1 - cdf_vals, cdf_vals)
+
+    # Optional GAMMA calculation
+    gamma_cols = {}
+    if not hide_covars:
+        QtY = Q.T @ Y
+        gamma0 = numpy.linalg.solve(R, QtY)
+        corrections = numpy.linalg.solve(R, XtQ.T).T  # (num_snps, num_covars)
+        gammas = gamma0 - beta[:, None] * corrections
+        for j in range(Q.shape[1]):
+            gamma_cols[f"GAMMA_{j}"] = gammas[:, j]
+
+    positions = list(
+        map(lambda i: grg.get_mutation_by_id(i).position, range(grg.num_mutations))
+    )
+
+    # Build output DataFrame
+    df_data = {
+        "POS": positions,
+        "COUNT": acount,
+        "BETA": beta,
+        "SE": se,
+        "T": t_vals,
+        "P": p,
+    }
+    df_data.update(gamma_cols)
+    return pandas.DataFrame(df_data)

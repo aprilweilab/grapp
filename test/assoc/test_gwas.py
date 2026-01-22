@@ -45,26 +45,33 @@ class TestGWAS(unittest.TestCase):
         )
 
         # Columns to compare
-        columns = ["BETA", "SE", "T", "P"]
+        columns = ["COUNT", "BETA", "SE", "T", "P"]
         atol = 1e-4
         rtol = 1e-3
 
         for i in range(len(df_py)):
+            acount = df_py.iloc[i]["COUNT"]
+            should_be_nan = acount == 0 or acount == self.grg.num_samples
             for col in columns:
                 val_py = df_py.iloc[i][col]
                 val_grg = df_grg.iloc[i][col]
                 diff = abs(val_py - val_grg)
                 rel_err = diff / (abs(val_grg) + 1e-8)
-                if diff > atol and rel_err > rtol:
-                    self.fail(
-                        f"Row {i}, column '{col}' mismatch:\n"
-                        f"Python: {val_py}, GRG: {val_grg}, "
-                        f"abs_diff={diff}, rel_err={rel_err}"
-                    )
+                fail_msg = (
+                    f"Row {i}, column '{col}' mismatch:\n"
+                    f"Python: {val_py}, GRG: {val_grg}, "
+                    f"abs_diff={diff}, rel_err={rel_err}"
+                )
+                if should_be_nan and col != "COUNT":
+                    assert math.isnan(val_py), fail_msg
+                    continue
+                assert not math.isnan(val_py), fail_msg
+                assert diff <= atol or rel_err <= rtol, fail_msg
 
     def test_gwas_covar(self):
         C = PCs(self.grg, 10, unitvar=False).to_numpy()
         df_nonstd = linear_assoc_covar(self.grg, self.Y, C)
+        self.assertFalse(numpy.any(numpy.isinf(df_nonstd["BETA"].to_numpy())))
         # Compare against the baseline of known values. This is just a test to make sure
         # nothing changes.
         numpy.testing.assert_allclose(df_nonstd["BETA"], self.covar["BETA"])
