@@ -123,9 +123,13 @@ def linear_assoc_no_covar(
     n = grg.num_individuals
     n_j = n - (miss_count / PLOIDY)
     assert numpy.all(n_j >= 0.0)
+    afreq_diploid = _div_or_default(acount, n_j, 0.0)
     if standardize:
         # diag(X^T @ X): for any standardized matrix with N rows, the diagonal will just be N
         XX = n_j
+        X_op = SciPyStdXOperator(
+            grg, pygrgl.TraversalDirection.UP, afreq_diploid / PLOIDY, haploid=False
+        )
     else:
         XX = pygrgl.matmul(
             grg,
@@ -133,14 +137,17 @@ def linear_assoc_no_covar(
             pygrgl.TraversalDirection.UP,
             init="xtx",
         ).squeeze()
+        X_op = SciPyXOperator(
+            grg,
+            pygrgl.TraversalDirection.UP,
+            haploid=False,
+            miss_values=afreq_diploid / PLOIDY,
+        )
     assert XX.shape == (grg.num_mutations,)
 
-    mut_XY_count = pygrgl.matmul(
-        grg, numpy.array([Y]), pygrgl.TraversalDirection.UP, by_individual=True
-    )[0]
+    mut_XY_count = Y @ X_op
 
     # Vectorized regression components
-    afreq_diploid = _div_or_default(acount, n_j, 0.0)
     total_pheno = Y.sum()
     nodeXY = mut_XY_count - n_j * afreq_diploid * (total_pheno / n)
     nodeXX = XX - acount * afreq_diploid
