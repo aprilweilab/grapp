@@ -8,10 +8,11 @@ import unittest
 from collections import defaultdict
 from grapp.assoc import linear_assoc_no_covar, linear_assoc_covar, read_pheno
 from grapp.linalg import PCs
+from grapp.util.filter import grg_save_samples
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(THIS_DIR, ".."))
-from testing_utils import construct_grg
+from testing_utils import construct_grg, complete_sample_sets
 
 CLEANUP = True
 INPUT_DIR = os.path.join(THIS_DIR, "input")
@@ -21,7 +22,7 @@ class TestGWAS(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.grg_filename = construct_grg("test-200-samples.vcf.gz", "test.gwas.grg")
-        cls.grg = pygrgl.load_immutable_grg(cls.grg_filename, load_up_edges=False)
+        cls.grg = pygrgl.load_immutable_grg(cls.grg_filename, load_up_edges=True)
         cls.pheno_path = os.path.join(INPUT_DIR, "phenotypes.txt")
         assert os.path.isfile(cls.pheno_path)
 
@@ -118,6 +119,51 @@ class TestGWAS(unittest.TestCase):
         self.assertGreater(
             small_err_proportion, 0.99
         )  # 99% of errors are less than 20% relative error
+
+    def test_gwas_no_covar_missing_Y(self):
+        """
+        When there are missing phenotypes (Y), they are represented as NaN. In this case, we need to scale
+        the variance term in the GWAS appropriately. The calculation should be numerically close to removing
+        those individuals from the GRG first, and then performing a GWAS.
+        """
+        # The individual list needs to be ordered, because GRG will retain the original order when down sampling.
+        keep_indivs, ignore_indivs, keep_samples, ignore_samples = complete_sample_sets(
+            self.grg, [22, 33, 54, 166, 167]
+        )
+
+        # Setup the missing data in the phenotype.
+        Y_miss = self.Y.copy()
+        Y_miss[ignore_indivs] = math.nan
+        Y_kept = self.Y[keep_indivs]
+
+        # Create the filtered GRG by just removing the individuals with missing Y
+        filt_name = "test.gwas.missingY.grg"
+        grg_save_samples(self.grg, filt_name, keep_samples)
+        filt_grg = pygrgl.load_immutable_grg(filt_name, load_up_edges=False)
+        self.assertEqual(filt_grg.num_individuals, Y_kept.shape[0])
+
+        # Use binomial estimates
+        true_sample_df = linear_assoc_no_covar(filt_grg, Y_kept, dist="binomial")
+        mask_sample_df = linear_assoc_no_covar(self.grg, Y_miss, dist="binomial")
+        true_nans = true_sample_df["BETA"].isna().sum()
+        mask_nans = mask_sample_df["BETA"].isna().sum()
+        self.assertEqual(true_nans, mask_nans)
+        numpy.testing.assert_allclose(true_sample_df["BETA"], mask_sample_df["BETA"])
+
+        # Use sample estimates (default dist)
+        true_sample_df = linear_assoc_no_covar(filt_grg, Y_kept)
+        mask_sample_df = linear_assoc_no_covar(self.grg, Y_miss)
+        true_nans = true_sample_df["BETA"].isna().sum()
+        mask_nans = mask_sample_df["BETA"].isna().sum()
+        self.assertGreaterEqual(true_nans, mask_nans)
+        true_beta = true_sample_df["BETA"].to_numpy()
+        mask_beta = mask_sample_df["BETA"].to_numpy()
+        for i in range(true_beta.shape[0]):
+            if abs((true_beta[i] - mask_beta[i]) / mask_beta[i]) > 0.25:
+                print(
+                    f"Mismatch @ {true_sample_df.iloc[i]}: {true_beta[i]} vs. {mask_beta[i]}"
+                )
+        numpy.testing.assert_allclose(true_sample_df["BETA"], mask_sample_df["BETA"])
 
     @classmethod
     def tearDownClass(cls):

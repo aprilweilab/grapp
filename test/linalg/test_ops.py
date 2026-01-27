@@ -10,6 +10,8 @@ from grapp.linalg.ops_scipy import (
     SciPyXTXOperator,
 )
 from grapp.util import allele_frequencies
+from grapp.util.filter import grg_save_samples
+import itertools
 import numpy
 import os
 import pygrgl
@@ -18,7 +20,13 @@ import unittest
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(THIS_DIR, ".."))
-from testing_utils import construct_grg, standardize_X, grg2X, split_and_load
+from testing_utils import (
+    construct_grg,
+    standardize_X,
+    grg2X,
+    split_and_load,
+    complete_sample_sets,
+)
 
 CLEANUP = True
 JOBS = 4
@@ -31,7 +39,7 @@ class TestLinearOperators(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.grg_filename = construct_grg("test-200-samples.vcf.gz", "test.linop.grg")
-        cls.grg = pygrgl.load_immutable_grg(cls.grg_filename, load_up_edges=False)
+        cls.grg = pygrgl.load_immutable_grg(cls.grg_filename, load_up_edges=True)
 
         numpy.random.seed(42)
 
@@ -438,6 +446,52 @@ class TestLinearOperators(unittest.TestCase):
         X_nomiss_op = SciPyXOperator(grg, pygrgl.TraversalDirection.UP)
         grg_result = rv @ X_nomiss_op.T
         self.assertFalse(numpy.allclose(numpy_result, grg_result))
+
+    def test_ignore_samples(self):
+        """
+        We downsample a GRG explicitly, and then use an operator's mask to ignore the same individuals,
+        and expect the matrix multiplication should produce the same result.
+        """
+        keep_indivs, ignore_indivs, keep_samples, ignore_samples = complete_sample_sets(
+            self.grg, [4, 9, 101, 177]
+        )
+
+        filt_name = "test.ignore_samples.grg"
+        grg_save_samples(self.grg, filt_name, keep_samples)
+        filt_grg = pygrgl.load_immutable_grg(filt_name, load_up_edges=False)
+
+        K = 17
+        Y = numpy.random.standard_normal((K, self.grg.num_individuals))
+        sub_Y = Y[:, keep_indivs]
+
+        # Non-standardized operator
+        truth_op = SciPyXOperator(filt_grg, pygrgl.TraversalDirection.UP)
+        truth_matrix = sub_Y @ truth_op
+        mask_op = SciPyXOperator(
+            self.grg, pygrgl.TraversalDirection.UP, mask_samples=ignore_indivs
+        )
+        mask_matrix = Y @ mask_op
+        numpy.testing.assert_allclose(truth_matrix, mask_matrix)
+
+        # Standardized operator
+        truth_freqs = allele_frequencies(filt_grg)
+        mask_freqs = allele_frequencies(self.grg, mask_samples=ignore_samples)
+        numpy.testing.assert_allclose(truth_freqs, mask_freqs, atol=ABSOLUTE_TOLERANCE)
+
+        truth_op = SciPyStdXOperator(
+            filt_grg, pygrgl.TraversalDirection.UP, truth_freqs
+        )
+        truth_matrix = sub_Y @ truth_op
+        mask_op = SciPyStdXOperator(
+            self.grg,
+            pygrgl.TraversalDirection.UP,
+            mask_freqs,
+            mask_samples=ignore_indivs,
+        )
+        mask_matrix = Y @ mask_op
+        numpy.testing.assert_allclose(
+            truth_matrix, mask_matrix, atol=ABSOLUTE_TOLERANCE
+        )
 
     @classmethod
     def tearDownClass(cls):

@@ -52,6 +52,10 @@ class SciPyXOperator(LinearOperator):
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
         mutation_filter) instead of NxM. Default: empty filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
+    :param mask_samples: Ignore any contribution from the samples listed in this array (e.g., pretend
+        they don't exist in the GRG). This does not affect the dimensions of the multiplication operations.
+        If haploid=True, these should be sample node IDs. Otherwise, they should be individual IDs.
+    :type mask_samples: Union[List[int], numpy.typing.NDArray]
     """
 
     def __init__(
@@ -62,6 +66,7 @@ class SciPyXOperator(LinearOperator):
         haploid: bool = False,
         miss_values: Optional[numpy.typing.NDArray] = None,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
+        mask_samples: Union[List[int], numpy.typing.NDArray] = [],
     ):
         if isinstance(mutation_filter, numpy.ndarray):
             mutation_filter = mutation_filter.tolist()
@@ -70,6 +75,9 @@ class SciPyXOperator(LinearOperator):
         self.sample_count = grg.num_samples if haploid else grg.num_individuals
         self.direction = direction
         self.mutation_filter = mutation_filter
+        if isinstance(mask_samples, numpy.ndarray):
+            mask_samples = mask_samples.tolist()
+        self.mask_samples = mask_samples
         self.grg_shape = (self.sample_count, grg.num_mutations)
         shape = (
             self.grg_shape
@@ -95,6 +103,14 @@ class SciPyXOperator(LinearOperator):
             A[:, self.mutation_filter] = other_matrix.T  # type: ignore
         else:
             A = other_matrix.T
+
+        # Notice: if this operator is used by another operator that modifies A (e.g., the standardized
+        # operators) this still works, because we 0 the value out right before the multiplication, treating
+        # these samples like they truly do not exist in the graph.
+        if mult_dir == _UP and self.mask_samples:
+            if A is other_matrix.T:
+                A = other_matrix.T.copy()
+            A[:, self.mask_samples] = 0
 
         # When doing the multiplication AX^T (DOWN), we need to initialize the missingness node
         # data values ("miss") with the input matrix * the missingness mean values per mutation.
@@ -326,6 +342,10 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
         mutation_filter) instead of NxM. Default: empty filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
+    :param mask_samples: Ignore any contribution from the samples listed in this array (e.g., pretend
+        they don't exist in the GRG). This does not affect the dimensions of the multiplication operations.
+        If haploid=True, these should be sample node IDs. Otherwise, they should be individual IDs.
+    :type mask_samples: Union[List[int], numpy.typing.NDArray]
     """
 
     def __init__(
@@ -336,12 +356,16 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
+        mask_samples: Union[List[int], numpy.typing.NDArray] = [],
     ):
         if isinstance(mutation_filter, numpy.ndarray):
             mutation_filter = mutation_filter.tolist()
         self.direction = direction
         self.sample_count = grg.num_samples if haploid else grg.num_individuals
         self.mutation_filter = mutation_filter
+        if isinstance(mask_samples, numpy.ndarray):
+            mask_samples = mask_samples.tolist()
+        self.mask_samples = mask_samples
         self.grg_shape = (self.sample_count, grg.num_mutations)
         shape = (
             self.grg_shape
@@ -384,16 +408,20 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
                 return contractm(XvS - consts).T
             else:
                 assert direction == _DOWN
+                m = expandm(other_matrix.T)
+                if self.mask_samples:
+                    m = m.copy() if m is other_matrix.T else m
+                    m[:, self.mask_samples] = 0
                 SXv = (
                     pygrgl.matmul(
                         self.grg,
-                        expandm(other_matrix.T),
+                        m,
                         mult_dir,
                         by_individual=not self.haploid,
                     )
                     / self.sigma_corrected
                 )
-                col_const = numpy.sum(other_matrix, axis=0, keepdims=True).T
+                col_const = numpy.sum(m.T, axis=0, keepdims=True).T
                 sub_const2 = (
                     self.mult_const * self.freqs / self.sigma_corrected
                 ) * col_const

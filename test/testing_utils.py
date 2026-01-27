@@ -1,11 +1,12 @@
+from grapp.util.simple import allele_frequencies
 from typing import Optional, List
 import glob
+import itertools
 import numpy
 import os
 import pygrgl
 import shutil
 import subprocess
-from grapp.util.simple import allele_frequencies
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 INPUT_DIR = os.path.join(THIS_DIR, "input")
@@ -138,3 +139,15 @@ def split_and_load(
     if cleanup:
         shutil.rmtree(out_dir)
     return grgs
+
+
+# Returns four lists: keep_indivs, ignore_indivs, keep_samples, ignore_samples, which are
+# all consistent.
+def complete_sample_sets(grg, ignore_indivs):
+    keep_indivs = [i for i in range(grg.num_individuals) if i not in ignore_indivs]
+    keep_samples = list(
+        itertools.chain.from_iterable(map(lambda i: (2 * i, 2 * i + 1), keep_indivs))
+    )
+    ignore_samples = [i for i in range(grg.num_samples) if i not in keep_samples]
+    assert set(keep_samples) | set(ignore_samples) == set(range(grg.num_samples))
+    return keep_indivs, ignore_indivs, keep_samples, ignore_samples

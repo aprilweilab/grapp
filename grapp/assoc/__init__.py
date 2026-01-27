@@ -1,13 +1,15 @@
+from enum import Enum
 from grapp.linalg.ops_scipy import SciPyStdXOperator, SciPyXOperator
 from grapp.util.simple import allele_counts
 from scipy.stats import t as t_distribution
+from typing import List
+import itertools
 import math
 import numpy
 import pandas
 import pygrgl
 import re
 import sklearn.linear_model
-from enum import Enum
 
 
 # This enum is just a container for string constants used below.
@@ -113,6 +115,7 @@ def _computeDiagXTX(
     n_j: numpy.typing.NDArray,
     afreq_haploid: numpy.typing.NDArray,
     standardize: bool,
+    mask_indivs: List[int] = [],
 ):
     # diag(X^T @ X): for any standardized matrix with N rows, the diagonal will just be N
     if standardize:
@@ -127,6 +130,13 @@ def _computeDiagXTX(
                 pygrgl.TraversalDirection.UP,
                 init="xtx",
             ).squeeze()
+            # The xtx calculation above does not know about our missing phenotypes, so we need
+            # to perform an adjustment. It was calculated for true_n samples, when we only have n_j
+            # samples after masking. This is equivalent to using X^T*X to compute the sample variance
+            # and then computing n_j*variance.
+            if mask_indivs:
+                true_n = n_j + len(mask_indivs)
+                XX = (XX * n_j) / true_n
         else:
             assert dist == _GenotypeDist.BINOMIAL.value
             XX = acount * (1 - afreq_haploid) + 2 * acount * afreq_haploid
@@ -145,7 +155,7 @@ def linear_assoc_no_covar(
     Performs regression for each mutation without adjusting for covariates. Missing data is treated as the
     mean genotype value (allele frequency for the relevant variant).
 
-    :param Y: Phenotype vector of shape (n_samples,).
+    :param Y: Phenotype vector of shape (n_samples,), with missing values specified as NaN.
     :type Y: numpy.ndarray
     :param only_beta: If True, returns a DataFrame with only the BETA column.
     :type only_beta: bool
@@ -161,19 +171,32 @@ def linear_assoc_no_covar(
     """
     PLOIDY = 2
     assert grg.ploidy == PLOIDY, "GWAS is only supported on diploid individuals"
-    assert not numpy.all(numpy.isnan(Y)), "Error: phenotype is all NaN (missing)"
     assert _GenotypeDist.is_valid(dist), "Invalid dist= value provided"
+    y_missing = numpy.isnan(Y)
+    assert not numpy.all(y_missing), "Error: phenotype is all NaN (missing)"
+    missing_indivs = numpy.flatnonzero(y_missing).tolist()
+    missing_samples = list(
+        itertools.chain.from_iterable(map(lambda i: (2 * i, 2 * i + 1), missing_indivs))
+    )
+    # Zero out the missing individuals for all future operations
+    Y = Y.copy()
+    Y[missing_indivs] = 0
 
-    acount, miss_count = allele_counts(grg, return_missing=True)
-    n = grg.num_individuals
+    acount, miss_count = allele_counts(
+        grg, return_missing=True, mask_samples=missing_samples
+    )
+    n = grg.num_individuals - len(missing_indivs)
     n_j = n - (miss_count / PLOIDY)
     assert numpy.all(n_j >= 0.0)
     afreq_diploid = _div_or_default(acount, n_j, 0.0)
     afreq_haploid = afreq_diploid / PLOIDY
-    XX = _computeDiagXTX(grg, dist, acount, n_j, afreq_haploid, standardize)
     if standardize:
         X_op = SciPyStdXOperator(
-            grg, pygrgl.TraversalDirection.UP, afreq_haploid, haploid=False
+            grg,
+            pygrgl.TraversalDirection.UP,
+            afreq_haploid,
+            haploid=False,
+            mask_samples=missing_indivs,
         )
         x_mean = numpy.zeros(afreq_diploid.shape)
         nx_mean = numpy.zeros(acount.shape)
@@ -182,16 +205,19 @@ def linear_assoc_no_covar(
             grg,
             pygrgl.TraversalDirection.UP,
             haploid=False,
-            miss_values=afreq_diploid / PLOIDY,
+            miss_values=afreq_haploid,
+            mask_samples=missing_indivs,
         )
         x_mean = afreq_diploid  # 2*f_i
         nx_mean = acount  # 2*n*f_i
 
     mut_XY_count = Y @ X_op
 
-    # Vectorized regression components
     total_pheno = Y.sum()
     nodeXY = mut_XY_count - n_j * x_mean * (total_pheno / n)
+    XX = _computeDiagXTX(
+        grg, dist, acount, n_j, afreq_haploid, standardize, mask_indivs=missing_indivs
+    )
     nodeXX = XX - nx_mean * x_mean
     beta = _div_or_default(nodeXY, nodeXX, math.nan)
     if only_beta:
@@ -254,7 +280,7 @@ def linear_assoc_covar(
     mean genotype value (allele frequency for the relevant variant).
     Uses QR decomposition to project out covariate effects from the phenotype and genotype vectors.
 
-    :param Y: Phenotype vector of shape (n_samples,).
+    :param Y: Phenotype vector of shape (n_samples,), with missing values specified as NaN.
     :type Y: numpy.ndarray
     :param C: Covariate matrix of shape (n_samples, n_covariates). Should include intercept.
     :type C: numpy.ndarray
@@ -294,6 +320,13 @@ def linear_assoc_covar(
             standardize=standardize,
         )
 
+    y_missing = numpy.isnan(Y)
+    assert not numpy.all(y_missing), "Error: phenotype is all NaN (missing)"
+    missing_indivs = numpy.flatnonzero(y_missing).tolist()
+    missing_samples = list(
+        itertools.chain.from_iterable(map(lambda i: (2 * i, 2 * i + 1), missing_indivs))
+    )
+
     Q, R = numpy.linalg.qr(C)
 
     # Compute Y adj
@@ -301,30 +334,37 @@ def linear_assoc_covar(
     if standardize:
         Yadj = (Yadj - numpy.mean(Yadj, axis=0)) / numpy.std(Yadj, axis=0)
 
-    acount, miss_count = allele_counts(grg, return_missing=True)
-    n = grg.num_individuals
+    acount, miss_count = allele_counts(
+        grg, return_missing=True, mask_samples=missing_samples
+    )
+    n = grg.num_individuals - len(missing_indivs)
     n_j = n - (miss_count / PLOIDY)
     assert numpy.all(n_j >= 0.0)
     afreq_diploid = _div_or_default(acount, n_j, 0.0)
     afreq_haploid = afreq_diploid / PLOIDY
-    XX = _computeDiagXTX(grg, dist, acount, n_j, afreq_haploid, standardize)
 
     # We perform the multiplications in the same way, but with different operators depending
     # on whether we are using the standardized genotype matrix.
     if standardize:
         X_op = SciPyStdXOperator(
-            grg, pygrgl.TraversalDirection.UP, afreq_haploid, haploid=False
+            grg,
+            pygrgl.TraversalDirection.UP,
+            afreq_haploid,
+            haploid=False,
+            mask_samples=missing_indivs,
         )
         x_mean = numpy.zeros(afreq_diploid.shape)
         nx_mean = numpy.zeros(acount.shape)
     else:
         X_op = SciPyXOperator(
-            grg, pygrgl.TraversalDirection.UP, haploid=False, miss_values=afreq_haploid
+            grg,
+            pygrgl.TraversalDirection.UP,
+            haploid=False,
+            miss_values=afreq_haploid,
+            mask_samples=missing_indivs,
         )
         x_mean = afreq_diploid  # 2*f_i
         nx_mean = acount  # 2*n*f_i
-
-    beta = numpy.zeros(XX.size)
 
     # G^TQ
     ###Computes G^TQ where Q's rows are duplicated so we can get X^TQ
@@ -334,6 +374,9 @@ def linear_assoc_covar(
     diagonal = (XtQ * XtQ).sum(axis=1)
 
     # Xadj^TXadj
+    XX = _computeDiagXTX(
+        grg, dist, acount, n_j, afreq_haploid, standardize, mask_indivs=missing_indivs
+    )
     xadjTxadj = XX - diagonal
 
     # Compute (Xadj^TYadj)
@@ -342,6 +385,7 @@ def linear_assoc_covar(
     total_pheno = Y.sum()
     nodeXY = xadjTyadj - n_j * x_mean * (total_pheno / n)
     nodeXX = xadjTxadj - nx_mean * x_mean
+    beta = numpy.zeros(XX.size)
     beta = _div_or_default(nodeXY, nodeXX, math.nan)
     if only_beta:
         return pandas.DataFrame({"BETA": beta})
