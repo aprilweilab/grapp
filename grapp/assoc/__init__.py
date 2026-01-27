@@ -7,6 +7,17 @@ import pandas
 import pygrgl
 import re
 import sklearn.linear_model
+from enum import Enum
+
+
+# This enum is just a container for string constants used below.
+class _GenotypeDist(str, Enum):
+    SAMPLE = "sample"
+    BINOMIAL = "binomial"
+
+    @classmethod
+    def is_valid(cls, str_value: str) -> bool:
+        return str_value in set(map(lambda x: x.value, cls))  # type: ignore
 
 
 def _div_or_default(a, b, d):
@@ -95,11 +106,40 @@ def read_pheno(filename: str) -> numpy.typing.NDArray:
     return last_col
 
 
+def _computeDiagXTX(
+    grg: pygrgl.GRG,
+    dist: str,
+    acount: numpy.typing.NDArray,
+    n_j: numpy.typing.NDArray,
+    afreq_haploid: numpy.typing.NDArray,
+    standardize: bool,
+):
+    # diag(X^T @ X): for any standardized matrix with N rows, the diagonal will just be N
+    if standardize:
+        XX = n_j
+    else:
+        # diag(X^T @ X): for the non-standardized genotype matrix, GRG has a special initialization
+        # method "xtx" which uses coalescence information to compute the diagonal in a single pass
+        if dist == _GenotypeDist.SAMPLE.value:
+            XX = pygrgl.matmul(
+                grg,
+                numpy.ones((1, grg.num_samples), dtype=numpy.int32),
+                pygrgl.TraversalDirection.UP,
+                init="xtx",
+            ).squeeze()
+        else:
+            assert dist == _GenotypeDist.BINOMIAL.value
+            XX = acount * (1 - afreq_haploid) + 2 * acount * afreq_haploid
+    assert XX.shape == (grg.num_mutations,)
+    return XX
+
+
 def linear_assoc_no_covar(
     grg: pygrgl.GRG,
     Y: numpy.typing.NDArray,
     only_beta: bool = False,
     standardize: bool = False,
+    dist: str = _GenotypeDist.SAMPLE.value,
 ) -> pandas.DataFrame:
     """
     Performs regression for each mutation without adjusting for covariates. Missing data is treated as the
@@ -109,8 +149,12 @@ def linear_assoc_no_covar(
     :type Y: numpy.ndarray
     :param only_beta: If True, returns a DataFrame with only the BETA column.
     :type only_beta: bool
-    :param standardize: If True, standardize X and Y.
+    :param standardize: If True, standardize X and Y (after adjusting for covariates).
     :type standardize: bool
+    :param dist: How to compute the :math:`diag(X^T X)` term. Options are: "sample" (use individual coalescence
+        information to compute sample mean and variance), "binomial" (assume the diploid data follows a binomial
+        distribution, for mean and variance).  Default: "sample".
+    :type dist: str
     :return: A DataFrame containing statistics for each mutation:
         - POS, COUNT, BETA, B0, SE, R2, T, and P.
     :rtype: pandas.DataFrame
@@ -118,39 +162,37 @@ def linear_assoc_no_covar(
     PLOIDY = 2
     assert grg.ploidy == PLOIDY, "GWAS is only supported on diploid individuals"
     assert not numpy.all(numpy.isnan(Y)), "Error: phenotype is all NaN (missing)"
+    assert _GenotypeDist.is_valid(dist), "Invalid dist= value provided"
 
     acount, miss_count = allele_counts(grg, return_missing=True)
     n = grg.num_individuals
     n_j = n - (miss_count / PLOIDY)
     assert numpy.all(n_j >= 0.0)
     afreq_diploid = _div_or_default(acount, n_j, 0.0)
+    afreq_haploid = afreq_diploid / PLOIDY
+    XX = _computeDiagXTX(grg, dist, acount, n_j, afreq_haploid, standardize)
     if standardize:
-        # diag(X^T @ X): for any standardized matrix with N rows, the diagonal will just be N
-        XX = n_j
         X_op = SciPyStdXOperator(
-            grg, pygrgl.TraversalDirection.UP, afreq_diploid / PLOIDY, haploid=False
+            grg, pygrgl.TraversalDirection.UP, afreq_haploid, haploid=False
         )
+        x_mean = numpy.zeros(afreq_diploid.shape)
+        nx_mean = numpy.zeros(acount.shape)
     else:
-        XX = pygrgl.matmul(
-            grg,
-            numpy.ones((1, grg.num_samples), dtype=numpy.int32),
-            pygrgl.TraversalDirection.UP,
-            init="xtx",
-        ).squeeze()
         X_op = SciPyXOperator(
             grg,
             pygrgl.TraversalDirection.UP,
             haploid=False,
             miss_values=afreq_diploid / PLOIDY,
         )
-    assert XX.shape == (grg.num_mutations,)
+        x_mean = afreq_diploid  # 2*f_i
+        nx_mean = acount  # 2*n*f_i
 
     mut_XY_count = Y @ X_op
 
     # Vectorized regression components
     total_pheno = Y.sum()
-    nodeXY = mut_XY_count - n_j * afreq_diploid * (total_pheno / n)
-    nodeXX = XX - acount * afreq_diploid
+    nodeXY = mut_XY_count - n_j * x_mean * (total_pheno / n)
+    nodeXX = XX - nx_mean * x_mean
     beta = _div_or_default(nodeXY, nodeXX, math.nan)
     if only_beta:
         return pandas.DataFrame({"BETA": beta})
@@ -205,6 +247,7 @@ def linear_assoc_covar(
     hide_covars: bool = True,
     standardize: bool = False,
     method: str = "QR",
+    dist: str = _GenotypeDist.SAMPLE.value,
 ) -> pandas.DataFrame:
     """
     Performs regression for each mutation with covariate adjustment. Missing data is treated as the
@@ -227,18 +270,29 @@ def linear_assoc_covar(
         linear regression between :math:`Y` and :math:`C` (to get :math:`B_c`), and then performs GWAS against
         :math:`Y'` (:math:`Y' = Y - C \\times B_c`).
     :type method: str
-    :return: A DataFrame containing at least BETA, SE, T, and P columns.
-            If hide_covars is False, also includes GAMMA columns.
+    :param dist: How to compute the :math:`diag(X^T X)` term. Options are: "sample" (use individual coalescence
+        information to compute sample mean and variance), "binomial" (assume the diploid data follows a binomial
+        distribution, for mean and variance).  Default: "sample".
+    :type dist: str
+    :return: A DataFrame containing at least BETA, SE, T, and P columns. If hide_covars is False, also includes
+        GAMMA columns.
     :rtype: pandas.DataFrame
     """
     PLOIDY = 2
     assert grg.ploidy == PLOIDY, "GWAS is only supported on diploid individuals"
     assert method in ("QR", "regress"), 'Invalid "method" parameter'
+    assert _GenotypeDist.is_valid(dist), "Invalid dist= value provided"
 
     if method == "regress":
         model = sklearn.linear_model.LinearRegression()
         regression = model.fit(C, Y)
-        return linear_assoc_no_covar(grg, Y - C @ regression.coef_, only_beta=only_beta)
+        return linear_assoc_no_covar(
+            grg,
+            Y - C @ regression.coef_,
+            only_beta=only_beta,
+            dist=dist,
+            standardize=standardize,
+        )
 
     Q, R = numpy.linalg.qr(C)
 
@@ -252,31 +306,23 @@ def linear_assoc_covar(
     n_j = n - (miss_count / PLOIDY)
     assert numpy.all(n_j >= 0.0)
     afreq_diploid = _div_or_default(acount, n_j, 0.0)
+    afreq_haploid = afreq_diploid / PLOIDY
+    XX = _computeDiagXTX(grg, dist, acount, n_j, afreq_haploid, standardize)
 
     # We perform the multiplications in the same way, but with different operators depending
     # on whether we are using the standardized genotype matrix.
     if standardize:
-        # diag(X^T @ X): for any standardized matrix with N rows, the diagonal will just be N
-        XX = n_j
         X_op = SciPyStdXOperator(
-            grg, pygrgl.TraversalDirection.UP, afreq_diploid / PLOIDY, haploid=False
+            grg, pygrgl.TraversalDirection.UP, afreq_haploid, haploid=False
         )
+        x_mean = numpy.zeros(afreq_diploid.shape)
+        nx_mean = numpy.zeros(acount.shape)
     else:
-        # diag(X^T @ X): for the non-standardized genotype matrix, GRG has a special initialization
-        # method "xtx" which uses coalescence information to compute the diagonal in a single pass
-        XX = pygrgl.matmul(
-            grg,
-            numpy.ones((1, grg.num_samples), dtype=numpy.int32),
-            pygrgl.TraversalDirection.UP,
-            init="xtx",
-        ).squeeze()
-
         X_op = SciPyXOperator(
-            grg,
-            pygrgl.TraversalDirection.UP,
-            haploid=False,
-            miss_values=afreq_diploid / PLOIDY,
+            grg, pygrgl.TraversalDirection.UP, haploid=False, miss_values=afreq_haploid
         )
+        x_mean = afreq_diploid  # 2*f_i
+        nx_mean = acount  # 2*n*f_i
 
     beta = numpy.zeros(XX.size)
 
@@ -294,8 +340,8 @@ def linear_assoc_covar(
     xadjTyadj = Yadj @ X_op
 
     total_pheno = Y.sum()
-    nodeXY = xadjTyadj - n_j * afreq_diploid * (total_pheno / n)
-    nodeXX = xadjTxadj - acount * afreq_diploid
+    nodeXY = xadjTyadj - n_j * x_mean * (total_pheno / n)
+    nodeXX = xadjTxadj - nx_mean * x_mean
     beta = _div_or_default(nodeXY, nodeXX, math.nan)
     if only_beta:
         return pandas.DataFrame({"BETA": beta})

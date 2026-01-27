@@ -98,6 +98,27 @@ class TestGWAS(unittest.TestCase):
         self.assertEqual(len(df_nonstd), len(df_std))
         self.assertEqual(self.grg.num_mutations, len(df_std))
 
+    def test_gwas_no_covar_dists(self):
+        """
+        The binomial method and the sample method should be very similar on neutral simulated data
+        of large sample size. For small sample sizes (like this test), the deviation can be quite
+        large.
+        """
+        df_sample = linear_assoc_no_covar(self.grg, self.Y)
+        df_binomial = linear_assoc_no_covar(self.grg, self.Y, dist="binomial")
+
+        sample_nans = df_sample["BETA"].isna().sum()
+        binomial_nans = df_binomial["BETA"].isna().sum()
+        self.assertEqual(sample_nans, binomial_nans)
+
+        relerr = (df_binomial["BETA"] - df_sample["BETA"]) / df_sample["BETA"]
+        small_errors = numpy.where((relerr < 0.20) & (relerr > -0.20))
+        total = self.grg.num_mutations - sample_nans
+        small_err_proportion = len(small_errors[0]) / total
+        self.assertGreater(
+            small_err_proportion, 0.99
+        )  # 99% of errors are less than 20% relative error
+
     @classmethod
     def tearDownClass(cls):
         if CLEANUP:
