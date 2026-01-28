@@ -1,12 +1,14 @@
 from grapp.assoc import (
-    read_covariates_matrix,
+    read_plink_covariates,
     read_pheno,
     linear_assoc_covar,
     linear_assoc_no_covar,
 )
+from grapp.cli.util import pandas_to_tsv
 import argparse
 import numpy
 import os
+import pandas
 import pygrgl
 
 
@@ -17,7 +19,11 @@ def add_options(subparser):
         "--phenotypes",
         help="The file containing the phenotypes. If no file is provided, random phenotype values are used.",
     )
-    subparser.add_argument("-c", "--covariates", help="Covariates text file to load")
+    subparser.add_argument(
+        "-c",
+        "--covariates",
+        help="Covariates file to load: plink format (.txt) or pandas dataframe tab-separated (.tsv)",
+    )
     subparser.add_argument(
         "-o",
         "--out-file",
@@ -37,16 +43,21 @@ def run(args):
         ), f"Phenotype file had {len(y)} rows, expected {g.num_individuals}"
 
     if args.covariates is not None:
-        C = read_covariates_matrix(args.covariates, True)
-        df = linear_assoc_covar(g, y, C)
+        if args.covariates.endswith(".txt"):
+            C = read_plink_covariates(args.covariates, True)
+        else:
+            assert args.covariates.endswith(
+                ".tsv"
+            ), "Covariates filename must end in .txt (plink format) or .tsv (pandas dataframe)"
+            C = pandas.read_csv(args.covariates, delimiter="\t").to_numpy()
+        gwas_df = linear_assoc_covar(g, y, C)
     else:
-        df = linear_assoc_no_covar(g, y)
+        gwas_df = linear_assoc_no_covar(g, y)
 
     if args.out_file is None:
         args.out_file = f"{os.path.basename(args.grg_input)}.assoc.tsv"
 
-    with open(args.out_file, "w") as fout:
-        df.to_csv(fout, sep="\t", index=False)
+    pandas_to_tsv(args.out_file, gwas_df)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 from grapp.linalg import (
     PCs,
 )
+from grapp.cli.util import pandas_to_tsv
 import argparse
 import os
 import pygrgl
@@ -39,8 +40,7 @@ def run(args):
 
     if args.pcs_out is None:
         args.pcs_out = f"{os.path.basename(args.grg_input)}.pcs.tsv"
-
-    scores.to_csv(args.pcs_out)
+    pandas_to_tsv(args.pcs_out, scores)
 
 
 if __name__ == "__main__":

@@ -1,5 +1,6 @@
 numpy
 pandas
-pygrgl>=2.3
+pygrgl>=2.5
 pyigd>=1.3
 scipy
+scikit-learn
