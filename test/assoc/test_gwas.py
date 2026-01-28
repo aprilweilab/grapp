@@ -158,12 +158,23 @@ class TestGWAS(unittest.TestCase):
         self.assertGreaterEqual(true_nans, mask_nans)
         true_beta = true_sample_df["BETA"].to_numpy()
         mask_beta = mask_sample_df["BETA"].to_numpy()
+        relative_err_thresh = 0.25
+        num_exceeded = 0
+        num_within = 0
         for i in range(true_beta.shape[0]):
-            if abs((true_beta[i] - mask_beta[i]) / mask_beta[i]) > 0.25:
-                print(
-                    f"Mismatch @ {true_sample_df.iloc[i]}: {true_beta[i]} vs. {mask_beta[i]}"
-                )
-        numpy.testing.assert_allclose(true_sample_df["BETA"], mask_sample_df["BETA"])
+            # The masked version is estimating the diag(X^T X) value from the whole graph, so
+            # the downsampled GRG can have freq=0 for the mutation, but the masked version will just
+            # estimate a really small value.
+            if math.isnan(true_beta[i]) and not math.isnan(mask_beta[i]):
+                self.assertEqual(mask_sample_df.iloc[i]["COUNT"], 0)
+            elif (
+                abs((true_beta[i] - mask_beta[i]) / mask_beta[i]) > relative_err_thresh
+            ):
+                num_exceeded += 1
+            else:
+                num_within += 1
+        # No more than 2% of beta shoulds exceed the relative error threshold
+        self.assertLess(num_exceeded / (num_within + num_exceeded), 0.02)
 
     @classmethod
     def tearDownClass(cls):

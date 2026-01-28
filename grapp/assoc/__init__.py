@@ -179,8 +179,9 @@ def linear_assoc_no_covar(
         itertools.chain.from_iterable(map(lambda i: (2 * i, 2 * i + 1), missing_indivs))
     )
     # Zero out the missing individuals for all future operations
-    Y = Y.copy()
-    Y[missing_indivs] = 0
+    if missing_indivs:
+        Y = Y.copy()
+        Y[missing_indivs] = 0
 
     acount, miss_count = allele_counts(
         grg, return_missing=True, mask_samples=missing_samples
@@ -326,6 +327,10 @@ def linear_assoc_covar(
     missing_samples = list(
         itertools.chain.from_iterable(map(lambda i: (2 * i, 2 * i + 1), missing_indivs))
     )
+    # Zero out the missing individuals for all future operations
+    if missing_indivs:
+        Y = Y.copy()
+        Y[missing_indivs] = 0
 
     Q, R = numpy.linalg.qr(C)
 
