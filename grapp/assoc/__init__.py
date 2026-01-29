@@ -83,7 +83,12 @@ def read_pheno(filename: str) -> numpy.typing.NDArray:
 
     # Find header line if it's there - this is helpful since PLINK allows for comments before the header
     for i, line in enumerate(lines):
+        # Plink header
         if re.match(r"^(#?FID\s+#?IID|#?IID)", line.strip(), re.IGNORECASE):
+            header_line = i
+            break
+        # grg_pheno_sim header
+        if re.match(r"^(person_id\tphenotypes)", line.strip(), re.IGNORECASE):
             header_line = i
             break
 

@@ -4,6 +4,7 @@ import os
 import pandas as pd
 import pygrgl
 import sys
+import tempfile
 import unittest
 from collections import defaultdict
 from grapp.assoc import linear_assoc_no_covar, linear_assoc_covar, read_pheno
@@ -175,6 +176,29 @@ class TestGWAS(unittest.TestCase):
                 num_within += 1
         # No more than 2% of beta shoulds exceed the relative error threshold
         self.assertLess(num_exceeded / (num_within + num_exceeded), 0.02)
+
+    def test_read_pheno(self):
+        # grg_pheno_sim emits two columns, with a header, tab-separated.
+        GRG_PHENO_OUTPUT = """person_id\tphenotypes
+0\t0.20630173530879656
+1\t-1.433337296521211
+2\t0.002598344575590285
+3\t0.03609182039687409"""
+
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            phen_file = os.path.join(tmpdirname, "test.phen")
+            with open(phen_file, "w") as f:
+                f.write(GRG_PHENO_OUTPUT)
+            Y = read_pheno(phen_file)
+            numpy.testing.assert_allclose(
+                Y,
+                [
+                    0.20630173530879656,
+                    -1.433337296521211,
+                    0.002598344575590285,
+                    0.03609182039687409,
+                ],
+            )
 
     @classmethod
     def tearDownClass(cls):
