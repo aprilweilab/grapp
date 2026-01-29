@@ -3,6 +3,7 @@ from grapp.cli import export_cli
 from grapp.cli import filter_cli
 from grapp.cli import pca_cli
 from grapp.cli import show_cli
+from grapp.cli import pheno_cli
 from grapp.util.simple import UserInputError
 
 import argparse
@@ -13,6 +14,7 @@ CMD_PCA = "pca"
 CMD_EXPORT = "export"
 CMD_FILTER = "filter"
 CMD_SHOW = "show"
+CMD_PHENO = "pheno"
 
 
 def main():
@@ -43,6 +45,11 @@ def main():
         help="Show data from a GRG.",
     )
     show_cli.add_options(show_parser)
+    pheno_parser = subparsers.add_parser(
+        CMD_PHENO,
+        help="Simulate phenotypes with a GRG.",
+    )
+    pheno_cli.add_options(pheno_parser)
 
     try:
         args = parser.parse_args()
@@ -60,6 +67,8 @@ def main():
             filter_cli.run(args)
         elif args.command == CMD_SHOW:
             show_cli.run(args)
+        elif args.command == CMD_PHENO:
+            pheno_cli.run(args)
         else:
             print(f"Invalid command {args.command}", file=sys.stderr)
             parser.print_help()
