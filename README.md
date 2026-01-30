@@ -7,6 +7,8 @@ compressing large datasets significantly, while also making calculations over th
 (see [the paper](https://www.nature.com/articles/s43588-024-00739-9) and the
 [core library](https://github.com/aprilweilab/grgl)).
 
+Some notes on usage are below, and you can also browse [the Python documentation for grapp](https://grapp.readthedocs.io/en/latest/).
+
 ## Installation
 
 ```
