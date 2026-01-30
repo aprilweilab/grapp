@@ -105,8 +105,8 @@ def export_igd(
     the same data. An IGD will almost always be larger than a GRG, but it can
     be useful because:
     1. The rows are variants, giving fast access to specific variants and their
-       list of samples. Instead of having traverse many graph edges to get the
-       sample list for a variant, you can just read the row from the IGD.
+    list of samples. Instead of having traverse many graph edges to get the
+    sample list for a variant, you can just read the row from the IGD.
     2. Conversion to other standard formats is very fast, for example .vcf.gz
 
     :param grg_or_filename: The GRG to convert, either as a pygrgl.GRG or the
@@ -198,9 +198,10 @@ def igd_to_vcf(
     buffer_lines: int = 1000,
 ):
     """
-    Convert and IGD file to VCF. Can be slow for huge datasets! General
-    usage should to either use a Gzip file object for the output, or stdout and
-    then pipe the results to bgzip.
+    WARNING: Incredibly slow for huge datasets!
+
+    Convert and IGD file to VCF.  General usage should to either use a Gzip file
+    object for the output, or stdout and then pipe the results to bgzip.
 
     This method produces a VCF file with the variants expanded just like the IGD file.
     To "unexpand" the VCF file, use `bcftools norm -m +any input.vcf -o output.vcf`.
@@ -333,9 +334,10 @@ def export_vcf(
     verbose: bool = False,
 ):
     """
-    Export a GRG to a phased VCF file. Can be slow for huge datasets! General
-    usage should to either use a Gzip file object for the output, or stdout and
-    then pipe the results to bgzip.
+    WARNING: Incredibly slow for huge datasets!
+
+    Export a GRG to a phased VCF file. Usage should to either use a Gzip file
+    object for the output, or stdout and then pipe the results to bgzip.
 
     :param grg_or_filename: The GRG to convert, either as a pygrgl.GRG or the
         filename of a GRG.

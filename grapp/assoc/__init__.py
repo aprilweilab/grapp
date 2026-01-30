@@ -171,7 +171,7 @@ def linear_assoc_no_covar(
         distribution, for mean and variance).  Default: "sample".
     :type dist: str
     :return: A DataFrame containing statistics for each mutation:
-        - POS, COUNT, BETA, B0, SE, R2, T, and P.
+        - POS, ALT, COUNT, BETA, B0, SE, R2, T, and P.
     :rtype: pandas.DataFrame
     """
     PLOIDY = 2
@@ -253,11 +253,15 @@ def linear_assoc_no_covar(
     positions = list(
         map(lambda i: grg.get_mutation_by_id(i).position, range(grg.num_mutations))
     )
+    alts = list(
+        map(lambda i: grg.get_mutation_by_id(i).allele, range(grg.num_mutations))
+    )
 
     # Build DataFrame
     df = pandas.DataFrame(
         {
             "POS": positions,
+            "ALT": alts,
             "COUNT": acount,
             "BETA": beta,
             "B0": b0,
@@ -423,10 +427,14 @@ def linear_assoc_covar(
     positions = list(
         map(lambda i: grg.get_mutation_by_id(i).position, range(grg.num_mutations))
     )
+    alts = list(
+        map(lambda i: grg.get_mutation_by_id(i).allele, range(grg.num_mutations))
+    )
 
     # Build output DataFrame
     df_data = {
         "POS": positions,
+        "ALT": alts,
         "COUNT": acount,
         "BETA": beta,
         "SE": se,

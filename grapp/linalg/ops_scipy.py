@@ -147,11 +147,13 @@ class SciPyXOperator(LinearOperator):
         return self._matmat_helper(other_matrix, self.direction)
 
     def _matvec(self, vect):
-        vect = numpy.array([vect]).T  # Column vector (Mx1)
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T  # Column vector (Mx1)
         return self._matmat(vect)
 
     def _rmatvec(self, vect):
-        vect = numpy.array([vect]).T  # Column vector (Nx1)
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T  # Column vector (Nx1)
         return self._rmatmat(vect)
 
 
@@ -212,11 +214,13 @@ class SciPyXTXOperator(LinearOperator):
         return self._matmat(other_matrix)
 
     def _matvec(self, vect):
-        vect = numpy.array([vect]).T  # Column vector (Mx1)
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T  # Column vector (Mx1)
         return self._matmat(vect)
 
     def _rmatvec(self, vect):
-        vect = numpy.array([vect]).T  # Column vector (Nx1)
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T  # Column vector (Nx1)
         return self._rmatmat(vect)
 
 
@@ -274,11 +278,13 @@ class SciPyXXTOperator(LinearOperator):
         return self._matmat(other_matrix)
 
     def _matvec(self, vect):
-        vect = numpy.array([vect]).T  # Column vector (Nx1)
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T  # Column vector (Nx1)
         return self._matmat(vect)
 
     def _rmatvec(self, vect):
-        vect = numpy.array([vect]).T  # Column vector (Nx1)
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T  # Column vector (Nx1)
         return self._rmatmat(vect)
 
 
@@ -436,13 +442,15 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
     def _matvec(self, vect):
         # Assume direction == UP, then we are operating on X. Given this, we have X: NxM and
         # the input vector must be of length M.
-        vect = numpy.array([vect]).T  # Column vector (Mx1)
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T  # Column vector (Mx1)
         return self._matmat(vect)
 
     def _rmatvec(self, vect):
         # Assume direction == UP, then we are operating on X^T for rmatvec. Given this, we
         # have X^T: MxN and the input vector must be of length N.
-        vect = numpy.array([vect]).T  # Column vector (Nx1)
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T  # Column vector (Nx1)
         return self._rmatmat(vect)
 
 
@@ -505,11 +513,13 @@ class SciPyStdXTXOperator(LinearOperator):
         return self._matmat(other_matrix)
 
     def _matvec(self, vect):
-        vect = numpy.array([vect]).T  # Column vector (Mx1)
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T  # Column vector (Mx1)
         return self._matmat(vect)
 
     def _rmatvec(self, vect):
-        vect = numpy.array([vect]).T  # Column vector (Nx1)
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T  # Column vector (Nx1)
         return self._rmatmat(vect)
 
 
@@ -557,11 +567,13 @@ class SciPyStdXXTOperator(LinearOperator):
         return self._matmat(other_matrix)
 
     def _matvec(self, vect):
-        vect = numpy.array([vect]).T  # Column vector (Nx1)
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T  # Column vector (Nx1)
         return self._matmat(vect)
 
     def _rmatvec(self, vect):
-        vect = numpy.array([vect]).T  # Column vector (Nx1)
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T  # Column vector (Nx1)
         return self._rmatmat(vect)
 
 
@@ -696,11 +708,13 @@ class MultiSciPyXOperator(LinearOperator):
         )
 
     def _matvec(self, vect):
-        vect = numpy.array([vect]).T
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T
         return self._matmat(vect)
 
     def _rmatvec(self, vect):
-        vect = numpy.array([vect]).T
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T
         return self._rmatmat(vect)
 
 
@@ -759,10 +773,13 @@ class MultiSciPyXTXOperator(LinearOperator):
         return self._matmat(other_matrix)
 
     def _matvec(self, vect):
-        vect = numpy.array([vect]).T
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T
         return self._matmat(vect)
 
     def _rmatvec(self, vect):
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T
         return self._matvec(vect)
 
 
@@ -885,11 +902,13 @@ class MultiSciPyStdXOperator(LinearOperator):
         )
 
     def _matvec(self, vect):
-        vect = numpy.array([vect]).T
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T
         return self._matmat(vect)
 
     def _rmatvec(self, vect):
-        vect = numpy.array([vect]).T
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T
         return self._rmatmat(vect)
 
 
@@ -944,8 +963,11 @@ class MultiSciPyStdXTXOperator(LinearOperator):
         return self._matmat(other_matrix)
 
     def _matvec(self, vect):
-        vect = numpy.array([vect]).T
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T
         return self._matmat(vect)
 
     def _rmatvec(self, vect):
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T
         return self._matvec(vect)
