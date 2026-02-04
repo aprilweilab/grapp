@@ -58,6 +58,7 @@ def run(args):
         args.out_file = f"{os.path.basename(args.grg_input)}.assoc.tsv"
 
     pandas_to_tsv(args.out_file, gwas_df)
+    print(f"Wrote results to {args.out_file}")
 
 
 if __name__ == "__main__":

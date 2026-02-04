@@ -341,7 +341,10 @@ def linear_assoc_covar(
         Y = Y.copy()
         Y[missing_indivs] = 0
 
-    Q, R = numpy.linalg.qr(C)
+    # QR decompose the centered covariate matrix. The linear regression of Yadj and Xadj
+    # has an error term that is based on C and epsilon (the original, unadjusted error term).
+    # This new error term must be 0-centered, so we center C here.
+    Q, R = numpy.linalg.qr(C - numpy.mean(C, axis=0))
 
     # Compute Y adj
     Yadj = Y - Q @ (Q.T @ Y)
