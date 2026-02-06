@@ -30,21 +30,17 @@ def _div_or_default(a, b, d):
     :param b: Denominator
     :param d: Default value for when denominator is 0.
     """
-    result = numpy.full(b.shape, d)
+    result = numpy.full(a.shape, d)
     return numpy.divide(a, b, out=result, where=(b != 0))
 
 
-def read_plink_covariates(
-    covar_path: str, add_intercept: bool = True
-) -> numpy.typing.NDArray:
+def read_plink_covariates(covar_path: str) -> numpy.typing.NDArray:
     """
     Reads a PLINK-style covariate file (no headers) and returns a NumPy matrix of covariate values.
     The first two columns (FID/IID) are ignored. Optionally adds an intercept column of 1s.
 
     :param path: Path to the covariate file.
     :type path: str
-    :param add_intercept: If True, adds a column of 1s to the left of the matrix.
-    :type add_intercept: bool
     :return: A NumPy array of shape (n_samples, n_covariates [+1 if intercept]).
     :rtype: numpy.ndarray
     """
@@ -60,10 +56,6 @@ def read_plink_covariates(
 
     # stack into (n_samples × K)
     X = numpy.vstack(rows) if rows else numpy.empty((0, 0))
-
-    if add_intercept and X.size:
-        intercept = numpy.ones((X.shape[0], 1))
-        X = numpy.hstack([intercept, X])
 
     return X
 
@@ -341,7 +333,11 @@ def linear_assoc_covar(
         Y = Y.copy()
         Y[missing_indivs] = 0
 
-    Q, R = numpy.linalg.qr(C)
+    # QR decompose the centered covariate matrix. The linear regression of Yadj and Xadj
+    # has an error term that is based on C and epsilon (the original, unadjusted error term).
+    # This new error term must be 0-centered, so we center C here.
+    centeredC = C - numpy.mean(C, axis=0)
+    Q, R = numpy.linalg.qr(centeredC)
 
     # Compute Y adj
     Yadj = Y - Q @ (Q.T @ Y)

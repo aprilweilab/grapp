@@ -41,6 +41,7 @@ def run(args):
     if args.pcs_out is None:
         args.pcs_out = f"{os.path.basename(args.grg_input)}.pcs.tsv"
     pandas_to_tsv(args.pcs_out, scores)
+    print(f"Wrote PCs to {args.pcs_out}")
 
 
 if __name__ == "__main__":
