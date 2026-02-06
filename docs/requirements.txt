@@ -1,2 +1,7 @@
-sphinx-rtd-theme
 numpy
+pandas
+pygrgl
+pyigd
+scipy
+scikit-learn
+sphinx-rtd-theme
