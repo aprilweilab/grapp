@@ -1,6 +1,8 @@
 from grapp.linalg import (
     MatrixSelection,
+    PCs,
     eigs as grg_eigs,
+    get_pcs_propca,
     sort_by_eigvalues,
 )
 import pygrgl
@@ -46,6 +48,14 @@ class TestPCA(unittest.TestCase):
         for ev, gev in zip(evects.T, grg_evects.T):
             # Vectors may differ by sign.
             self.assertTrue(numpy.allclose(ev, gev) or numpy.allclose(-ev, gev))
+
+    # Just make sure PCA succeeds
+    def test_pca_smoketest(self):
+        PCs(self.grg, k=20)
+
+    # Just make sure PCA succeeds
+    def test_propca_smoketest(self):
+        get_pcs_propca(self.grg, k=20)
 
     @classmethod
     def tearDownClass(cls):

@@ -10,17 +10,11 @@ def _EM(grg: pygrgl.GRG, C: NDArray, freqs: NDArray) -> NDArray:
     ###Compute E
     E = np.linalg.inv(C.T @ C) @ C.T
     ###Find stuff for standardization
-    X = (
-        _SciPyStdXOperator(grg, pygrgl.TraversalDirection.UP, freqs, haploid=False)
-        ._matmat(E.T)
-        .T
-    )
+    X = _SciPyStdXOperator(grg, pygrgl.TraversalDirection.UP, freqs)._matmat(E.T).T
     ###Compute M
     M = X.T @ np.linalg.inv(X @ X.T)
     ###Compute C
-    C = _SciPyStdXOperator(
-        grg, pygrgl.TraversalDirection.DOWN, freqs, haploid=False
-    )._matmat(M)
+    C = _SciPyStdXOperator(grg, pygrgl.TraversalDirection.DOWN, freqs)._matmat(M)
     ###Repeat
     return C
 
@@ -32,7 +26,7 @@ def _compute_pcs_from_C(
     Q, R = np.linalg.qr(C, mode="reduced")
 
     # 2 Project into that basis
-    B = _SciPyStdXOperator(grg, pygrgl.TraversalDirection.UP, freqs, False)._matmat(Q).T
+    B = _SciPyStdXOperator(grg, pygrgl.TraversalDirection.UP, freqs)._matmat(Q).T
 
     # 3 SVD of matrix B
     U, S, Vt = np.linalg.svd(B, full_matrices=False)
