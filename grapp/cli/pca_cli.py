@@ -36,7 +36,9 @@ def add_options(subparser):
 
 def run(args):
     grg = pygrgl.load_immutable_grg(args.grg_input, load_up_edges=False)
-    scores = PCs(grg, args.dimensions, args.normalize, use_pro_pca=args.pro_pca)
+    scores = PCs(
+        grg, k=args.dimensions, unitvar=args.normalize, use_pro_pca=args.pro_pca
+    )
 
     if args.pcs_out is None:
         args.pcs_out = f"{os.path.basename(args.grg_input)}.pcs.tsv"

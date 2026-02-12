@@ -47,7 +47,7 @@ def sort_by_eigvalues(
 def eigs(
     matrix: MatrixSelection,
     grg: pygrgl.GRG,
-    first_k: int,
+    k: int,
     standardized: bool = True,
     haploid: bool = False,
 ) -> Tuple[NDArray, NDArray]:
@@ -59,15 +59,15 @@ def eigs(
     :type matrix: MatrixSelection
     :param grg: The GRG to operate on.
     :type grg: pygrgl.GRG
-    :param first_k: The number of (largest) eigen values/vectors to retrieve.
-    :type first_k: int
+    :param k: The number of (largest) eigen values/vectors to retrieve.
+    :type k: int
     :param standardized: Set to False to use the non-standardized matrix. Default: True.
     :type standardized: bool
     :param haploid: Set to True to use the haploid values (0,1) instead of diploid values (0,1,2).
     :type haploid: bool
     :return: (eigen_value, eigen_vectors) as defined by scipy.sparse.linalg.eigs
     """
-    first_k = min(first_k, grg.num_mutations)
+    k = min(k, grg.num_mutations)
     freqs = allele_frequencies(grg)
 
     if matrix == MatrixSelection.X:
@@ -93,21 +93,21 @@ def eigs(
             operator = _SciPyStdXTXOperator(grg, freqs, haploid=haploid)
         else:
             operator = _SciPyXTXOperator(grg, freqs, haploid=haploid)
-    eigen_values, eigen_vectors = _scipy_eigs(operator, k=first_k, which="LR")
+    eigen_values, eigen_vectors = _scipy_eigs(operator, k=k, which="LR")
     sort_by_eigvalues(eigen_values, eigen_vectors)
     return eigen_values, eigen_vectors
 
 
-def get_eig_pcs(grg: pygrgl.GRG, first_k: int) -> Tuple[NDArray, NDArray, NDArray]:
+def get_eig_pcs(grg: pygrgl.GRG, k: int) -> Tuple[NDArray, NDArray, NDArray]:
     """
     Get the principle components for each sample corresponding to the first :math:`k` eigenvectors from a GRG,
     using an iterative eigenvector decomposition method.
 
     :param grg: The GRG to perform PCA on.
     :type grg: pygrgl.GRG
-    :param first_k: The number of eigenvectors/values to use. These correspond to the `k` largest
+    :param k: The number of eigenvectors/values to use. These correspond to the `k` largest
         eigenvalues.
-    :type first_k: int
+    :type k: int
     :return: A triple (PC_scores, eigen_values, eigen_vectors) where each is a numpy array.
     :rtype: numpy.ndarray
     """
@@ -116,7 +116,7 @@ def get_eig_pcs(grg: pygrgl.GRG, first_k: int) -> Tuple[NDArray, NDArray, NDArra
 
     op = _SciPyStdXTXOperator(grg, freqs, haploid=False)
 
-    eigen_values, eigen_vectors = _scipy_eigs(op, k=first_k, which="LR")
+    eigen_values, eigen_vectors = _scipy_eigs(op, k=k, which="LR")
     sort_by_eigvalues(eigen_values, eigen_vectors)
 
     # Standardize all k eigenvectors at once: for later
@@ -129,7 +129,7 @@ def get_eig_pcs(grg: pygrgl.GRG, first_k: int) -> Tuple[NDArray, NDArray, NDArra
 
 def PCs(
     grg: pygrgl.GRG,
-    first_k: int,
+    k: int,
     unitvar: bool = True,
     include_eig: bool = False,
     use_pro_pca: bool = False,
@@ -139,9 +139,9 @@ def PCs(
 
     :param grg: The GRG to perform PCA on.
     :type grg: pygrgl.GRG
-    :param first_k: The number of eigenvectors/values to use. These correspond to the `k` largest
+    :param k: The number of eigenvectors/values to use. These correspond to the `k` largest
         eigenvalues.
-    :type first_k: int
+    :type k: int
     :param unitvar: When True, normalize the PCs by dividing by the square root of each
         corresponding eigenvalue. Default: True.
     :type unitvar: bool
@@ -151,11 +151,11 @@ def PCs(
     :return: A pandas.DataFrame with a row per individual and a column per principle component.
     :rtype: pandas.DataFrame
     """
-    first_k = min(first_k, grg.num_mutations)
+    k = min(k, grg.num_mutations)
     if use_pro_pca:
-        PC_scores, eigen_values, eigen_vectors = get_pcs_propca(grg, first_k)
+        PC_scores, eigen_values, eigen_vectors = get_pcs_propca(grg, k)
     else:
-        PC_scores, eigen_values, eigen_vectors = get_eig_pcs(grg, first_k)
+        PC_scores, eigen_values, eigen_vectors = get_eig_pcs(grg, k)
 
     if unitvar:
         PC_scores = PC_scores / numpy.sqrt(eigen_values.real)[None, :]
