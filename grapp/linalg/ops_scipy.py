@@ -346,7 +346,7 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
         genotype matrix. Default: False.
     :type haploid: bool
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
-        mutation_filter) instead of NxM. Default: empty filter.
+        mutation_filter) instead of NxM. Only keep mutations with IDs in mutation_filter. Default: empty filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     :param mask_samples: Ignore any contribution from the samples listed in this array (e.g., pretend
         they don't exist in the GRG). This does not affect the dimensions of the multiplication operations.

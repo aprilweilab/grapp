@@ -32,12 +32,22 @@ def add_options(subparser):
         action="store_true",
         help="Use the ProPCA algorithm to compute principle components.",
     )
+    subparser.add_argument(
+        "--sample-window",
+        type=int,
+        help="If provided, defines a window width in base-pair. Within each window (starting at the"
+        "Mutation with the lowest coordinate) randomly choose a single SNP. This SNP set is used for PCA.",
+    )
 
 
 def run(args):
     grg = pygrgl.load_immutable_grg(args.grg_input, load_up_edges=False)
     scores = PCs(
-        grg, k=args.dimensions, unitvar=args.normalize, use_pro_pca=args.pro_pca
+        grg,
+        k=args.dimensions,
+        unitvar=args.normalize,
+        use_pro_pca=args.pro_pca,
+        sample_window=args.sample_window,
     )
 
     if args.pcs_out is None:

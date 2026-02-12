@@ -6,10 +6,12 @@ could apply to many different types of analyses.
 import numpy
 import pandas as pd
 import pygrgl
+import random
+import sys
 from enum import Enum
 from numpy.typing import NDArray
 from scipy.sparse.linalg import eigs as _scipy_eigs
-from typing import Tuple
+from typing import Tuple, List, Dict, Any
 
 from grapp.linalg.ops_scipy import (
     SciPyXOperator as _SciPyXOperator,
@@ -25,6 +27,32 @@ class MatrixSelection(Enum):
     X = 1  # The NxM genotype matrix
     XT = 2  # The MxN genotype matrix
     XTX = 3  # The MxM covariance or correlation matrix
+
+
+def _random_window_filter(grg: pygrgl.GRG, sample_window: int):
+    # Create a mask for random mutation subset based on input argument.
+    if sample_window == 1:
+        mutation_filter = None
+    else:
+        mutation_window_bp = [
+            grg.get_mutation_by_id(0).position,
+        ]
+        mutation_window_ids: List[List[int]] = [
+            [],
+        ]
+        for mut_id in range(grg.num_mutations):
+            mut = grg.get_mutation_by_id(mut_id)
+            while mut.position >= (mutation_window_bp[-1] + sample_window):
+                mutation_window_bp.append(mutation_window_bp[-1] + sample_window)
+                mutation_window_ids.append([])
+            mutation_window_ids[-1].append(mut_id)
+        # Randomly choose a mutation ID from each window.
+        mutation_filter = []
+        for window_list in mutation_window_ids:
+            if window_list:
+                random.shuffle(window_list)
+                mutation_filter.append(window_list[0])
+    return mutation_filter
 
 
 def sort_by_eigvalues(
@@ -50,6 +78,7 @@ def eigs(
     k: int,
     standardized: bool = True,
     haploid: bool = False,
+    op_kwargs: Dict[str, Any] = {},
 ) -> Tuple[NDArray, NDArray]:
     """
     Get the first K eigen values and vectors from a GRG.
@@ -73,32 +102,50 @@ def eigs(
     if matrix == MatrixSelection.X:
         if standardized:
             operator = _SciPyStdXOperator(
-                grg, pygrgl.TraversalDirection.UP, freqs, haploid=haploid
+                grg,
+                pygrgl.TraversalDirection.UP,
+                freqs,
+                haploid=haploid,
+                **op_kwargs,
             )
         else:
             operator = _SciPyXOperator(
-                grg, pygrgl.TraversalDirection.UP, freqs, haploid=haploid
+                grg,
+                pygrgl.TraversalDirection.UP,
+                freqs,
+                haploid=haploid,
+                **op_kwargs,
             )
     elif matrix == MatrixSelection.XT:
         if standardized:
             operator = _SciPyStdXOperator(
-                grg, pygrgl.TraversalDirection.DOWN, freqs, haploid=haploid
+                grg,
+                pygrgl.TraversalDirection.DOWN,
+                freqs,
+                haploid=haploid,
+                **op_kwargs,
             )
         else:
             operator = _SciPyXOperator(
-                grg, pygrgl.TraversalDirection.DOWN, freqs, haploid=haploid
+                grg,
+                pygrgl.TraversalDirection.DOWN,
+                freqs,
+                haploid=haploid,
+                **op_kwargs,
             )
     elif matrix == MatrixSelection.XTX:
         if standardized:
-            operator = _SciPyStdXTXOperator(grg, freqs, haploid=haploid)
+            operator = _SciPyStdXTXOperator(grg, freqs, haploid=haploid, **op_kwargs)
         else:
-            operator = _SciPyXTXOperator(grg, freqs, haploid=haploid)
+            operator = _SciPyXTXOperator(grg, freqs, haploid=haploid, **op_kwargs)
     eigen_values, eigen_vectors = _scipy_eigs(operator, k=k, which="LR")
     sort_by_eigvalues(eigen_values, eigen_vectors)
     return eigen_values, eigen_vectors
 
 
-def get_eig_pcs(grg: pygrgl.GRG, k: int) -> Tuple[NDArray, NDArray, NDArray]:
+def get_eig_pcs(
+    grg: pygrgl.GRG, k: int, op_kwargs: Dict[str, Any]
+) -> Tuple[NDArray, NDArray, NDArray]:
     """
     Get the principle components for each sample corresponding to the first :math:`k` eigenvectors from a GRG,
     using an iterative eigenvector decomposition method.
@@ -108,13 +155,15 @@ def get_eig_pcs(grg: pygrgl.GRG, k: int) -> Tuple[NDArray, NDArray, NDArray]:
     :param k: The number of eigenvectors/values to use. These correspond to the `k` largest
         eigenvalues.
     :type k: int
+    :param op_kwargs: A dictionary of keyword arguments to pass to the underlying SciPyStdXTXOperator.
+    :type op_kwargs: Dict[str, Any]
     :return: A triple (PC_scores, eigen_values, eigen_vectors) where each is a numpy array.
     :rtype: numpy.ndarray
     """
 
     freqs = allele_frequencies(grg)
 
-    op = _SciPyStdXTXOperator(grg, freqs, haploid=False)
+    op = _SciPyStdXTXOperator(grg, freqs, haploid=False, **op_kwargs)
 
     eigen_values, eigen_vectors = _scipy_eigs(op, k=k, which="LR")
     sort_by_eigvalues(eigen_values, eigen_vectors)
@@ -122,7 +171,11 @@ def get_eig_pcs(grg: pygrgl.GRG, k: int) -> Tuple[NDArray, NDArray, NDArray]:
     # Standardize all k eigenvectors at once: for later
     eigvects_f64 = eigen_vectors.real.astype(numpy.float64)
     PC_scores = _SciPyStdXOperator(
-        grg, pygrgl.TraversalDirection.UP, freqs, haploid=False
+        grg,
+        pygrgl.TraversalDirection.UP,
+        freqs,
+        haploid=False,
+        **op_kwargs,
     )._matmat(eigvects_f64)
     return PC_scores, eigen_values, eigen_vectors
 
@@ -133,6 +186,7 @@ def PCs(
     unitvar: bool = True,
     include_eig: bool = False,
     use_pro_pca: bool = False,
+    sample_window: int = 1,
 ):
     """
     Get the principle components for each sample corresponding to the first :math:`k` eigenvectors from a GRG.
@@ -148,14 +202,29 @@ def PCs(
     :param include_eig: When True, the return value is a triple of (DataFrame, EigenValues, EigenVectors),
         where the eigen values and vectors are as returned by scipy.sparse.linalg.eigs(). Default: False.
     :type include_eig: bool
+    :param sample_window: If provided, defines a window width in base-pair. Within each window (starting at
+        the Mutation with the lowest coordinate) randomly choose a single SNP and use that for performing
+        PCA. Default: 1 (use every SNP).
+    :type sample_window: Optional[int]
     :return: A pandas.DataFrame with a row per individual and a column per principle component.
     :rtype: pandas.DataFrame
     """
     k = min(k, grg.num_mutations)
+
+    # Create a mask for random mutation subset based on input argument.
+    mutation_filter = _random_window_filter(grg, sample_window)
+    if mutation_filter is not None:
+        print(
+            f"Using {len(mutation_filter)} / {grg.num_mutations} mutations",
+            file=sys.stderr,
+        )
+
     if use_pro_pca:
         PC_scores, eigen_values, eigen_vectors = get_pcs_propca(grg, k)
     else:
-        PC_scores, eigen_values, eigen_vectors = get_eig_pcs(grg, k)
+        PC_scores, eigen_values, eigen_vectors = get_eig_pcs(
+            grg, k, op_kwargs={"mutation_filter": mutation_filter}
+        )
 
     if unitvar:
         PC_scores = PC_scores / numpy.sqrt(eigen_values.real)[None, :]
