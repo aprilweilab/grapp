@@ -8,16 +8,19 @@ import pandas as pd
 import pygrgl
 import random
 import sys
+import concurrent.futures
 from enum import Enum
 from numpy.typing import NDArray
 from scipy.sparse.linalg import eigs as _scipy_eigs
-from typing import Tuple, List, Dict, Any
+from typing import Tuple, List, Dict, Any, Union, Optional
 
 from grapp.linalg.ops_scipy import (
     SciPyXOperator as _SciPyXOperator,
     SciPyXTXOperator as _SciPyXTXOperator,
     SciPyStdXOperator as _SciPyStdXOperator,
+    MultiSciPyStdXOperator as _MultiSciPyStdXOperator,
     SciPyStdXTXOperator as _SciPyStdXTXOperator,
+    MultiSciPyStdXTXOperator as _MultiSciPyStdXTXOperator,
 )
 from grapp.linalg.proPCA import get_pcs_propca
 from grapp.util import allele_frequencies
@@ -31,9 +34,8 @@ class MatrixSelection(Enum):
 
 def _random_window_filter(grg: pygrgl.GRG, sample_window: int):
     # Create a mask for random mutation subset based on input argument.
-    if sample_window == 1:
-        mutation_filter = None
-    else:
+    mutation_filter = []
+    if sample_window > 1:
         mutation_window_bp = [
             grg.get_mutation_by_id(0).position,
         ]
@@ -47,7 +49,6 @@ def _random_window_filter(grg: pygrgl.GRG, sample_window: int):
                 mutation_window_ids.append([])
             mutation_window_ids[-1].append(mut_id)
         # Randomly choose a mutation ID from each window.
-        mutation_filter = []
         for window_list in mutation_window_ids:
             if window_list:
                 random.shuffle(window_list)
@@ -144,14 +145,17 @@ def eigs(
 
 
 def get_eig_pcs(
-    grg: pygrgl.GRG, k: int, op_kwargs: Dict[str, Any]
+    grgs: Union[pygrgl.GRG, List[pygrgl.GRG]],
+    k: int,
+    op_kwargs: Dict[str, Any] = {},
+    threads: int = 1,
 ) -> Tuple[NDArray, NDArray, NDArray]:
     """
     Get the principle components for each sample corresponding to the first :math:`k` eigenvectors from a GRG,
     using an iterative eigenvector decomposition method.
 
-    :param grg: The GRG to perform PCA on.
-    :type grg: pygrgl.GRG
+    :param grgs: The GRG or list of GRGs to perform PCA on.
+    :type grgs: Union[pygrgl.GRG, List[pygrgl.GRG]]
     :param k: The number of eigenvectors/values to use. These correspond to the `k` largest
         eigenvalues.
     :type k: int
@@ -161,38 +165,57 @@ def get_eig_pcs(
     :rtype: numpy.ndarray
     """
 
-    freqs = allele_frequencies(grg)
-
-    op = _SciPyStdXTXOperator(grg, freqs, haploid=False, **op_kwargs)
+    freqs: Union[List[numpy.typing.NDArray], numpy.typing.NDArray]
+    if isinstance(grgs, list):
+        executor = concurrent.futures.ThreadPoolExecutor(threads)
+        futures = [executor.submit(allele_frequencies, grg) for grg in grgs]
+        freqs = [f.result() for f in futures]
+        op = _MultiSciPyStdXTXOperator(
+            grgs, freqs, haploid=False, threads=threads, **op_kwargs
+        )
+    else:
+        freqs = allele_frequencies(grgs, adjust_missing=True)
+        op = _SciPyStdXTXOperator(grgs, freqs, haploid=False, **op_kwargs)
 
     eigen_values, eigen_vectors = _scipy_eigs(op, k=k, which="LR")
     sort_by_eigvalues(eigen_values, eigen_vectors)
 
     # Standardize all k eigenvectors at once: for later
     eigvects_f64 = eigen_vectors.real.astype(numpy.float64)
-    PC_scores = _SciPyStdXOperator(
-        grg,
-        pygrgl.TraversalDirection.UP,
-        freqs,
-        haploid=False,
-        **op_kwargs,
-    )._matmat(eigvects_f64)
+    if isinstance(grgs, list):
+        PC_scores = _MultiSciPyStdXOperator(
+            grgs,
+            pygrgl.TraversalDirection.UP,
+            freqs,  # type: ignore
+            haploid=False,
+            threads=threads,
+            **op_kwargs,
+        )._matmat(eigvects_f64)
+    else:
+        PC_scores = _SciPyStdXOperator(
+            grgs,
+            pygrgl.TraversalDirection.UP,
+            freqs,  # type: ignore
+            haploid=False,
+            **op_kwargs,
+        )._matmat(eigvects_f64)
     return PC_scores, eigen_values, eigen_vectors
 
 
 def PCs(
-    grg: pygrgl.GRG,
+    grgs: Union[pygrgl.GRG, List[pygrgl.GRG]],
     k: int,
     unitvar: bool = True,
     include_eig: bool = False,
     use_pro_pca: bool = False,
     sample_window: int = 1,
+    threads: int = 1,
 ):
     """
     Get the principle components for each sample corresponding to the first :math:`k` eigenvectors from a GRG.
 
-    :param grg: The GRG to perform PCA on.
-    :type grg: pygrgl.GRG
+    :param grgs: The GRG or list of GRGs to perform PCA on.
+    :type grgs: Union[pygrgl.GRG, List[pygrgl.GRG]]
     :param k: The number of eigenvectors/values to use. These correspond to the `k` largest
         eigenvalues.
     :type k: int
@@ -206,24 +229,39 @@ def PCs(
         the Mutation with the lowest coordinate) randomly choose a single SNP and use that for performing
         PCA. Default: 1 (use every SNP).
     :type sample_window: Optional[int]
+    :param threads: Number of threads to use. Will never use more than the number of input GRGs.
+        Default: 1.
+    :type threads: int
     :return: A pandas.DataFrame with a row per individual and a column per principle component.
     :rtype: pandas.DataFrame
     """
-    k = min(k, grg.num_mutations)
+    grg_list = grgs if isinstance(grgs, list) else [grgs]
+    grgs = None
 
     # Create a mask for random mutation subset based on input argument.
-    mutation_filter = _random_window_filter(grg, sample_window)
-    if mutation_filter is not None:
+    total_muts = 0
+    mutation_filter: Optional[List[int]] = []
+    for grg in grg_list:
+        assert mutation_filter is not None  # mypy is really dumb sometimes
+        mutation_filter.extend(_random_window_filter(grg, sample_window))
+        total_muts += grg.num_mutations
+    if mutation_filter:
         print(
-            f"Using {len(mutation_filter)} / {grg.num_mutations} mutations",
+            f"Using {len(mutation_filter)} / {total_muts} mutations",
             file=sys.stderr,
         )
+        k = min(k, len(mutation_filter))
+    else:
+        mutation_filter = None
+        k = min(k, total_muts)
 
     if use_pro_pca:
-        PC_scores, eigen_values, eigen_vectors = get_pcs_propca(grg, k)
+        PC_scores, eigen_values, eigen_vectors = get_pcs_propca(
+            grg_list, k, threads=threads, op_kwargs={"mutation_filter": mutation_filter}
+        )
     else:
         PC_scores, eigen_values, eigen_vectors = get_eig_pcs(
-            grg, k, op_kwargs={"mutation_filter": mutation_filter}
+            grg_list, k, threads=threads, op_kwargs={"mutation_filter": mutation_filter}
         )
 
     if unitvar:
