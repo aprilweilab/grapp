@@ -1,4 +1,4 @@
-from grg_pheno_sim.phenotype import sim_phenotypes
+from grg_pheno_sim.phenotype import sim_phenotypes, convert_to_phen
 import argparse
 import os
 import pygrgl
@@ -32,8 +32,13 @@ def add_options(subparser):
     )
     subparser.add_argument(
         "--save-effects",
-        action="store_true",
-        help="Write file <grg_input>.effects.par, containing the per-SNP effect sizes.",
+        help="Write the per-SNP effect sizes to the given filename.",
+    )
+    subparser.add_argument(
+        "-o",
+        "--out-file",
+        default=None,
+        help="Tab-separated output file (with header); exported Pandas DataFrame. Default: <grg_input>.phen",
     )
 
 
@@ -42,19 +47,21 @@ def run(args):
     effect_path = f"{base}.effects.par"
     output_path = f"{base}.phen"
     grg = pygrgl.load_immutable_grg(args.grg_input, load_up_edges=False)
-    sim_phenotypes(
+    phenotypes = sim_phenotypes(
         grg,
         num_causal=args.num_causal,
         random_seed=args.seed,
         normalize_phenotype=not args.no_normalize,
         normalize_genetic_values_before_noise=True,
         heritability=args.heritability,
-        save_effect_output=args.save_effects,
-        effect_path=effect_path,
-        standardized_output=True,
-        path=output_path,
+        save_effect_output=bool(args.save_effects is not None),
+        effect_path=args.save_effects,
         header=True,
     )
+    if args.out_file is None:
+        args.out_file = output_path
+    convert_to_phen(phenotypes, args.out_file, include_header=True)
+
     print()
     print(f"Wrote phenotypes to {output_path}")
 

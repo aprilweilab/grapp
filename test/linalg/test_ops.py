@@ -172,6 +172,7 @@ class TestLinearOperators(unittest.TestCase):
         multi_op = MultiSciPyXOperator(
             grgs, pygrgl.TraversalDirection.UP, haploid=False, threads=JOBS
         )
+        self.assertEqual(multi_op.shape, grg_op.shape)
         split_dip_result = multi_op._matmat(random_input)
         # Test equality
         numpy.testing.assert_allclose(full_dip_result, split_dip_result)
@@ -190,6 +191,7 @@ class TestLinearOperators(unittest.TestCase):
         multi_op = MultiSciPyXOperator(
             grgs, pygrgl.TraversalDirection.DOWN, haploid=False, threads=JOBS
         )
+        self.assertEqual(multi_op.shape, grg_op.shape)
         split_dip_result = multi_op._matmat(random_input)
         # Test equality
         numpy.testing.assert_allclose(full_dip_result, split_dip_result)
@@ -208,6 +210,7 @@ class TestLinearOperators(unittest.TestCase):
         full_dip_result = grg_op._matmat(random_input)
         # Result on the split graph
         multi_op = MultiSciPyXTXOperator(grgs, haploid=False, threads=JOBS)
+        self.assertEqual(multi_op.shape, grg_op.shape)
         split_dip_result = multi_op._matmat(random_input)
         # Test equality
         numpy.testing.assert_allclose(full_dip_result, split_dip_result)
@@ -232,6 +235,7 @@ class TestLinearOperators(unittest.TestCase):
         multi_op = MultiSciPyStdXOperator(
             grgs, pygrgl.TraversalDirection.UP, freq_list, haploid=False, threads=JOBS
         )
+        self.assertEqual(multi_op.shape, grg_op.shape)
         split_dip_result = multi_op._matmat(random_input)
         # Test equality
         numpy.testing.assert_allclose(full_dip_result, split_dip_result)
@@ -252,6 +256,7 @@ class TestLinearOperators(unittest.TestCase):
         multi_op = MultiSciPyStdXTXOperator(
             grgs, freq_list, haploid=False, threads=JOBS
         )
+        self.assertEqual(multi_op.shape, grg_op.shape)
         split_dip_result = multi_op._matmat(random_input)
         # Test equality
         numpy.testing.assert_allclose(
@@ -283,6 +288,7 @@ class TestLinearOperators(unittest.TestCase):
             mutation_filter=keep_mutations,
             threads=JOBS,
         )
+        self.assertEqual(multi_op.shape, grg_op.shape)
         split_dip_result = multi_op._matmat(random_input)
         numpy.testing.assert_allclose(full_dip_result, split_dip_result)
 
@@ -314,6 +320,7 @@ class TestLinearOperators(unittest.TestCase):
             mutation_filter=keep_mutations,
             threads=JOBS,
         )
+        self.assertEqual(multi_op.shape, grg_op.shape)
         split_dip_result = multi_op._matmat(random_input)
         numpy.testing.assert_allclose(
             full_dip_result, split_dip_result, atol=ABSOLUTE_TOLERANCE
