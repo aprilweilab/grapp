@@ -627,6 +627,7 @@ class MultiSciPyXOperator(LinearOperator):
             self.num_mutations = len(self.mutation_filter)
         self.operators = []
         num_samples = grgs[0].num_samples
+        num_indivs = grgs[0].num_individuals
         prev_miss_start = 0
         prev_max_mut = 0
         for g in grgs:
@@ -672,6 +673,11 @@ class MultiSciPyXOperator(LinearOperator):
         # Should we concatenate the result for _matmat, or add them together?
         self.concat = self.direction == pygrgl.TraversalDirection.DOWN
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
+        sample_count = num_samples if haploid else num_indivs
+        shape = (sample_count, self.num_mutations)
+        if direction == _DOWN:
+            shape = _transpose_shape(shape)
+        super().__init__(dtype=dtype, shape=shape)
 
     def _matmat_helper(self, other_matrix, direction, op_method):
         # For UP, we have "(N x M) x (M x k)", so we need to split the other_matrix into chunks of the
@@ -825,6 +831,7 @@ class MultiSciPyStdXOperator(LinearOperator):
         self.direction = direction
         self.num_mutations = sum([g.num_mutations for g in grgs])
         num_samples = grgs[0].num_samples
+        num_indivs = grgs[0].num_individuals
         self.mutation_filter = mutation_filter
         if mutation_filter is not None:
             assert len(self.mutation_filter) <= self.num_mutations  # type: ignore
@@ -864,6 +871,11 @@ class MultiSciPyStdXOperator(LinearOperator):
         # Should we concatenate the result for _matmat, or add them together?
         self.concat = self.direction == pygrgl.TraversalDirection.DOWN
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
+        sample_count = num_samples if haploid else num_indivs
+        shape = (sample_count, self.num_mutations)
+        if direction == _DOWN:
+            shape = _transpose_shape(shape)
+        super().__init__(dtype=dtype, shape=shape)
 
     def _matmat_helper(self, other_matrix, direction, op_method):
         # For UP, we have "(N x M) x (M x k)", so we need to split the other_matrix into chunks of the
