@@ -26,6 +26,12 @@ def add_options(subparser):
         help="The file containing the phenotypes. If no file is provided, random phenotype values are used.",
     )
     subparser.add_argument(
+        "-b",
+        "--binomial",
+        action="store_true",
+        help="Use the binomial approximation for SNP variance instead of sample variance.",
+    )
+    subparser.add_argument(
         "-c",
         "--covariates",
         help="Covariates file to load: plink format (.txt) or pandas dataframe tab-separated (.tsv)",
@@ -62,12 +68,16 @@ def do_single_gwas(
     C: Optional[numpy.typing.NDArray],
     method: Optional[str],
     standardize: bool,
+    binomial: bool,
 ):
+    dist = "binomial" if binomial else "sample"
     if C is not None:
         assert method is not None
-        gwas_df = linear_assoc_covar(grg, y, C, method=method, standardize=standardize)
+        gwas_df = linear_assoc_covar(
+            grg, y, C, method=method, standardize=standardize, dist=dist
+        )
     else:
-        gwas_df = linear_assoc_no_covar(grg, y, standardize=standardize)
+        gwas_df = linear_assoc_no_covar(grg, y, standardize=standardize, dist=dist)
     return gwas_df
 
 
@@ -99,7 +109,9 @@ def run(args):
     if len(grgs) > 1:
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs)
         futures = [
-            executor.submit(do_single_gwas, g, y, C, method, args.standardize)
+            executor.submit(
+                do_single_gwas, g, y, C, method, args.standardize, args.binomial
+            )
             for g in grgs
         ]
         dataframes = [f.result() for f in futures]
@@ -116,7 +128,7 @@ def run(args):
             pandas_to_tsv(args.out_file, df)
             print(f"Wrote results to {args.out_file}")
     else:
-        gwas_df = do_single_gwas(grgs[0], y, C, method, args.standardize)
+        gwas_df = do_single_gwas(grgs[0], y, C, method, args.standardize, args.binomial)
         if args.out_file is None:
             args.out_file = f"{os.path.basename(args.grg_input[0])}.assoc.tsv"
         pandas_to_tsv(args.out_file, gwas_df)
