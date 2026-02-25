@@ -7,5 +7,5 @@ black grapp/ setup.py test/ examples/ --check
 
 mypy grapp --no-namespace-packages --ignore-missing-imports
 
-pytest test/
+pytest -x test/
 

@@ -70,6 +70,7 @@ def get_pcs_propca(
     threads: int = 1,
     op_kwargs: Dict[str, Any] = {},
     return_approx: bool = False,
+    random_seed: int = 42,
 ):
     if verbose:
 
@@ -80,6 +81,8 @@ def get_pcs_propca(
 
         def vlog(msg):
             pass
+
+    rng = np.random.default_rng(random_seed)
 
     if max_iterations == -1:
         max_iterations = k + 2
@@ -105,7 +108,7 @@ def get_pcs_propca(
         )
 
     X = np.ones((2 * k, std_operator.shape[1]))
-    C0 = np.random.normal(loc=0, scale=1, size=(std_operator.shape[1], 2 * k))
+    C0 = rng.normal(loc=0, scale=1, size=(std_operator.shape[1], 2 * k))
     for i in range(max_iterations):
         C, X = _EM(C0, std_operator)
         if convergence_lim != -1 and i % g == 0:

@@ -149,6 +149,7 @@ def get_eig_pcs(
     k: int,
     op_kwargs: Dict[str, Any] = {},
     threads: int = 1,
+    verbose: bool = True,
 ) -> Tuple[NDArray, NDArray, NDArray]:
     """
     Get the principle components for each sample corresponding to the first :math:`k` eigenvectors from a GRG,
@@ -161,10 +162,13 @@ def get_eig_pcs(
     :type k: int
     :param op_kwargs: A dictionary of keyword arguments to pass to the underlying SciPyStdXTXOperator.
     :type op_kwargs: Dict[str, Any]
+    :param threads: Maximum number of threads to use. At most len(grgs) tasks can be done in parallel.
+    :type threads: int
+    :param verbose: Emit information on stderr.
+    :type verboose: bool
     :return: A triple (PC_scores, eigen_values, eigen_vectors) where each is a numpy array.
     :rtype: numpy.ndarray
     """
-
     freqs: Union[List[numpy.typing.NDArray], numpy.typing.NDArray]
     if isinstance(grgs, list):
         executor = concurrent.futures.ThreadPoolExecutor(threads)
@@ -176,12 +180,14 @@ def get_eig_pcs(
     else:
         freqs = allele_frequencies(grgs, adjust_missing=True)
         op = _SciPyStdXTXOperator(grgs, freqs, haploid=False, **op_kwargs)
+    if verbose:
+        print(f"Running eigen decomposition on {op.shape[0]} variants")
 
     eigen_values, eigen_vectors = _scipy_eigs(op, k=k, which="LR")
     sort_by_eigvalues(eigen_values, eigen_vectors)
 
     # Standardize all k eigenvectors at once: for later
-    eigvects_f64 = eigen_vectors.real.astype(numpy.float64)
+    assert eigen_vectors.real.dtype == numpy.float64
     if isinstance(grgs, list):
         PC_scores = _MultiSciPyStdXOperator(
             grgs,
@@ -190,7 +196,7 @@ def get_eig_pcs(
             haploid=False,
             threads=threads,
             **op_kwargs,
-        )._matmat(eigvects_f64)
+        )._matmat(eigen_vectors.real)
     else:
         PC_scores = _SciPyStdXOperator(
             grgs,
@@ -198,7 +204,7 @@ def get_eig_pcs(
             freqs,  # type: ignore
             haploid=False,
             **op_kwargs,
-        )._matmat(eigvects_f64)
+        )._matmat(eigen_vectors.real)
     return PC_scores, eigen_values, eigen_vectors
 
 
@@ -268,7 +274,7 @@ def PCs(
         PC_scores = PC_scores / numpy.sqrt(eigen_values.real)[None, :]
 
     colnames = [f"PC{i+1}" for i in range(PC_scores.shape[1])]
-    df = pd.DataFrame(PC_scores, columns=colnames)
+    df = pd.DataFrame(PC_scores, columns=colnames, copy=False)
     df.index.name = "Individual"
     if include_eig:
         return df, eigen_values, eigen_vectors
