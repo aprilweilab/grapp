@@ -1,6 +1,5 @@
-from enum import Enum
 from grapp.linalg.ops_scipy import SciPyStdXOperator, SciPyXOperator
-from grapp.util.simple import allele_counts
+from grapp.util.simple import allele_counts, _GenotypeDist
 from scipy.stats import t as t_distribution
 from typing import List
 import itertools
@@ -11,16 +10,6 @@ import pygrgl
 import re
 import sklearn.linear_model
 import sys
-
-
-# This enum is just a container for string constants used below.
-class _GenotypeDist(str, Enum):
-    SAMPLE = "sample"
-    BINOMIAL = "binomial"
-
-    @classmethod
-    def is_valid(cls, str_value: str) -> bool:
-        return str_value in set(map(lambda x: x.value, cls))  # type: ignore
 
 
 def _div_or_default(a, b, d):

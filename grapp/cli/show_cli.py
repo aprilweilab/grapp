@@ -54,6 +54,7 @@ def run(args):
         print(f"Phased? {'Yes' if grg.is_phased else 'No'}")
         print(f"Nodes: {grg.num_nodes}")
         print(f"Edges: {grg.num_edges}")
+        print(f"Has missing data?: {'Yes' if grg.has_missing_data else 'No'}")
     if args.individuals:
         if grg.has_individual_ids:
             print("\n".join(map(grg.get_individual_id, range(grg.num_individuals))))
