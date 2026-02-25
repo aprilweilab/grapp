@@ -9,6 +9,8 @@ compressing large datasets significantly, while also making calculations over th
 
 Some notes on usage are below, and you can also browse [the Python documentation for grapp](https://grapp.readthedocs.io/en/latest/).
 
+Check out the [command-line cheatsheet](https://github.com/aprilweilab/grapp/blob/main/CHEATSHEET.md) for examples on how to perform many tasks.
+
 ## Installation
 
 ```
@@ -104,7 +106,8 @@ options:
 
 GRG files can be filtered, prior to performing analysis on them. See the filter command:
 ```
-usage: grapp filter [-h] (-S INDIVIDUALS | --hap-samples HAP_SAMPLES | -r RANGE) grg_input grg_output
+sage: grapp filter [-h] [-S INDIVIDUALS | --hap-samples HAP_SAMPLES | -P POPULATIONS] [-r RANGE] [-c MIN_AC] [-C MAX_AC] [-q MIN_AF] [-Q MAX_AF] [-v TYPES] [-A] [-m MIN_ALLELES] [-M MAX_ALLELES]
+                    grg_input grg_output
 
 positional arguments:
   grg_input             The input GRG file
@@ -112,17 +115,38 @@ positional arguments:
 
 options:
   -h, --help            show this help message and exit
+
+sample filters:
   -S INDIVIDUALS, --individuals INDIVIDUALS
                         Keep only the individuals with the IDs given as a comma-separated list or in the given filename.
   --hap-samples HAP_SAMPLES
                         Keep only the haploid samples with the NodeIDs (indexes) given as a comma-separated list or in the given filename.
+  -P POPULATIONS, --populations POPULATIONS
+                        Keep only the individuals with populations matching the comma-separated list or in the given filename.
+
+mutation filters:
   -r RANGE, --range RANGE
                         Keep only the variants within the given range, in base pairs. Example: "lower-upper", where both are integers and lower is inclusive, upper is exclusive.
+  -c MIN_AC, --min-ac MIN_AC
+                        Minimum allele count to keep. All Mutations with count below this value will be dropped
+  -C MAX_AC, --max-ac MAX_AC
+                        Maximum allele count to keep. All Mutations with count above this value will be dropped
+  -q MIN_AF, --min-af MIN_AF
+                        Minimum allele frequency to keep. All Mutations with frequency below this value will be dropped
+  -Q MAX_AF, --max-af MAX_AF
+                        Maximum allele frequency to keep. All Mutations with frequency above this value will be dropped
+  -v TYPES, --types TYPES
+                        Comma-separated list of variant types to select. Site is selected if any of the ALT alleles is of the type requested. Types are determined by comparing the REF and ALT alleles.
+  -A, --apply-to-sites  By default, all filters apply to each variant independently. This flag will cause an entire site to be dropped if any variants are filtered out.
+  -m MIN_ALLELES, --min-alleles MIN_ALLELES
+                        Only keep sites with at least this many alleles. Counts all REF alleles as 1.
+  -M MAX_ALLELES, --max-alleles MAX_ALLELES
+                        Only keep sites with at most this many alleles. Counts all REF alleles as 1. Use '-m 2 -M 2 -v snps' to view only biallelic SNPs.
 ```
 
 #### Library
 
-Library documentation will be generated soon.
+Library API reference document is [here](https://grapp.readthedocs.io/en/latest/). There are also some tutorials in the [GRG documentation](https://grgl.readthedocs.io/en/stable/tutorials/GWAS.html) (and correspond [Jupyter notebooks](https://github.com/aprilweilab/grgl/tree/main/doc/tutorials/notebooks)).
 
 ### nn
 

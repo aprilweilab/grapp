@@ -4,6 +4,7 @@ Functions for filtering data out of a GRG to create a new, smaller GRG.
 
 from multiprocessing import Pool
 from typing import List, Tuple, Optional, Union, Callable
+from collections import defaultdict
 import os
 import pygrgl
 
@@ -199,6 +200,9 @@ def grg_save_mut_filter(
     out_filename: str,
     mut_filter: Callable[[pygrgl.GRG, int], bool],
     bp_range: Tuple[int, int] = (0, 0),
+    apply_to_sites: bool = False,
+    min_variants: int = 0,
+    max_variants: int = 2**32,
 ):
     """
     Given a GRG filename or object, save a new GRG that contains only the Mutations selected
@@ -211,13 +215,42 @@ def grg_save_mut_filter(
     :param mut_filter: Callback (function) that takes a MutationID (int) as input and returns
         true if that mutation should be kept.
     :type mut_filter: Callable[[pygrgl.GRG, int], bool]
+    :param bp_range: The range to associate with the GRG, as metadata. DOES NOT IMPACT THE
+        FILTERING AT ALL.
+    :type bp_range: Tuple[int, int]
+    :param apply_to_sites: By default, the filter applies to each variant independently. This
+        flag will cause an entire site to be dropped if any variants are filtered out.
+    :type apply_to_sites: bool
+    :param min_variants: Any site with fewer variants than this will be dropped.
+    :type min_variants: int
+    :param max_variants: Any site with more variants than this will be dropped.
+    :type max_variants: int
+    :return: Tuple (mutations kept, mutations dropped)
+    :rtype: Tuple[int, int]
     """
     if isinstance(grg_or_filename, str):
         grg = pygrgl.load_immutable_grg(grg_or_filename, load_up_edges=False)
     else:
         grg = grg_or_filename
 
-    seeds = list(filter(lambda m: mut_filter(grg, m), range(grg.num_mutations)))
+    site2muts = defaultdict(list)
+    for m in range(grg.num_mutations):
+        mut = grg.get_mutation_by_id(m)
+        site2muts[mut.position].append(m)
+
+    seeds = []
+    for _, muts in sorted(site2muts.items()):
+        if len(muts) < min_variants or len(muts) > max_variants:
+            continue
+        keep_muts = []
+        for m in muts:
+            if mut_filter(grg, m):
+                keep_muts.append(m)
+        if apply_to_sites:
+            if len(keep_muts) == len(muts):
+                seeds.extend(keep_muts)
+        else:
+            seeds.extend(keep_muts)
     if not seeds:
         raise UserInputError(
             "No Mutations found matching range; cannot filter to an empty GRG."
@@ -229,6 +262,7 @@ def grg_save_mut_filter(
         seeds,
         bp_range=bp_range,
     )
+    return (len(seeds), grg.num_mutations - len(seeds))
 
 
 def multi_grg_save_mut_filter(

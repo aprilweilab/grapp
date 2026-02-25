@@ -1,6 +1,4 @@
-import argparse
-import os
-
+from enum import Enum
 from grapp.util.filter import (
     grg_save_individuals,
     grg_save_mut_filter,
@@ -12,15 +10,41 @@ from grapp.util.simple import (
     allele_counts,
     allele_frequencies,
 )
+from typing import Set
+import argparse
+import os
 import pygrgl
 
 
+class VariantType(Enum):
+    SNPS = "snps"  # Length=1
+    INDELS = "indels"  # Length <50
+    MNPS = "mnps"  # Length of ALT same as length of REF
+    OTHER = "other"  # Anything else
+
+    def __str__(self):
+        return self.value
+
+
+def variant_type_set(arg_value: str) -> Set[VariantType]:
+    choices = set(map(lambda v: v.value, VariantType))
+    result = set()
+    for typ in arg_value.split(","):
+        if typ not in choices:
+            raise UserInputError(f"{typ} is not a valid type (try one of {choices})")
+        result.add(VariantType[typ.upper()])
+    assert len(result) > 0
+    return result
+
+
 def list_or_filename(arg_value):
-    if not os.path.isfile(arg_value):
-        parts = arg_value.split(",")
-        return list(map(str.strip, parts))
-    with open(arg_value) as f:
-        return list(map(str.strip, f))
+    parts = arg_value.split(",")
+    if len(parts) == 1:
+        if not os.path.isfile(arg_value):
+            raise UserInputError(f"Cannot access file {arg_value}")
+        with open(arg_value) as f:
+            return list(map(str.strip, f))
+    return list(map(str.strip, parts))
 
 
 def int_list_or_filename(arg_value):
@@ -98,6 +122,33 @@ def add_options(subparser: argparse.ArgumentParser):
         type=float,
         help="Maximum allele frequency to keep. All Mutations with frequency above this value will be dropped",
     )
+    mutation_group.add_argument(
+        "-v",
+        "--types",
+        type=variant_type_set,
+        help="Comma-separated list of variant types to select. Site is selected if any of the ALT alleles is of the type requested. Types are determined by comparing the REF and ALT alleles.",
+    )
+    mutation_group.add_argument(
+        "-A",
+        "--apply-to-sites",
+        action="store_true",
+        help="By default, all filters apply to each variant independently. This flag will cause an entire site to be dropped if any variants are filtered out.",
+    )
+    mutation_group.add_argument(
+        "-m",
+        "--min-alleles",
+        type=int,
+        default=1,
+        help="Only keep sites with at least this many alleles. Counts all REF alleles as 1.",
+    )
+    mutation_group.add_argument(
+        "-M",
+        "--max-alleles",
+        type=int,
+        default=2**32,
+        help="Only keep sites with at most this many alleles. Counts all REF alleles as 1. "
+        "Use '-m 2 -M 2 -v snps' to view only biallelic SNPs.",
+    )
 
 
 def require_unspecified(args, msg, *params):
@@ -116,6 +167,10 @@ def run(args):
             "max_ac",
             "min_af",
             "max_af",
+            "types",
+            "apply_to_sites",
+            "min_alleles",
+            "max_alleles",
         )
 
     if args.individuals:
@@ -160,9 +215,31 @@ def run(args):
                 return False
             if args.max_af is not None and freqs[mut_id] > args.max_af:
                 return False
+            if args.types is not None:
+                ref_len = len(mut.ref_allele)
+                alt_len = len(mut.allele)
+                if ref_len == alt_len:
+                    if ref_len == 1:
+                        my_type = VariantType.SNPS
+                    else:
+                        my_type = VariantType.MNPS
+                elif ref_len < 50 and alt_len < 50:
+                    my_type = VariantType.INDELS
+                else:
+                    my_type = VariantType.OTHER
+                return my_type in args.types
             return True
 
-        grg_save_mut_filter(args.grg_input, args.grg_output, filter_method, brange)
+        kept, dropped = grg_save_mut_filter(
+            args.grg_input,
+            args.grg_output,
+            filter_method,
+            brange,
+            apply_to_sites=args.apply_to_sites,
+            min_variants=args.min_alleles - 1,  # Counting the REF allele
+            max_variants=args.max_alleles - 1,  # Counting the REF allele
+        )
+        print(f"Kept {kept} variants. Dropped {dropped} variants")
 
 
 if __name__ == "__main__":
