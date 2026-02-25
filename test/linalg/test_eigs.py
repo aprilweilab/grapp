@@ -51,11 +51,20 @@ class TestPCA(unittest.TestCase):
 
     # Just make sure PCA succeeds
     def test_pca_smoketest(self):
-        PCs(self.grg, k=20)
+        # Not all recent versions of scipy support passing in a random number generator,
+        # so we need to do this instead for testing purposes
+        numpy.random.seed(42)
+        scores = PCs(self.grg, k=20).to_numpy()
+        pca_expect = numpy.loadtxt(os.path.join(INPUT_DIR, "pca.expected.txt"))
+        numpy.testing.assert_allclose(numpy.abs(scores), numpy.abs(pca_expect))
 
     # Just make sure PCA succeeds
     def test_propca_smoketest(self):
-        get_pcs_propca(self.grg, k=20)
+        scores, _, _ = get_pcs_propca(self.grg, k=20, convergence_lim=1e-5)
+        propca_expect = numpy.loadtxt(os.path.join(INPUT_DIR, "propca.expected.txt"))
+        numpy.testing.assert_allclose(
+            numpy.abs(scores), numpy.abs(propca_expect), atol=0.005
+        )
 
     @classmethod
     def tearDownClass(cls):

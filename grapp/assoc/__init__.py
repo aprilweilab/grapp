@@ -10,6 +10,7 @@ import pandas
 import pygrgl
 import re
 import sklearn.linear_model
+import sys
 
 
 # This enum is just a container for string constants used below.
@@ -60,12 +61,14 @@ def read_plink_covariates(covar_path: str) -> numpy.typing.NDArray:
     return X
 
 
-def read_pheno(filename: str) -> numpy.typing.NDArray:
+def read_pheno(filename: str, verbose: bool = True) -> numpy.typing.NDArray:
     """
     Reads a PLINK/GCTA/GRG-style phenotype file and returns the phenotype vector.
 
     :param path: Path to the phenotype file.
     :type path: str
+    :param verbose: Emit warnings/information about the file if True. Default: True.
+    :type verbose: bool
     :return: A one-dimensional NumPy array of phenotype values.
     :rtype: numpy.ndarray
     """
@@ -101,6 +104,11 @@ def read_pheno(filename: str) -> numpy.typing.NDArray:
         last_col = df.iloc[:, -1].astype(float).to_numpy()
     except ValueError:
         raise ValueError("Last column contains non-numeric values.")
+    if verbose:
+        print(
+            f"Using the column {df.shape[1]} (the last one) for phenotype.",
+            file=sys.stderr,
+        )
 
     return last_col
 

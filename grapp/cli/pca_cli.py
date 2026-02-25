@@ -8,7 +8,7 @@ import pygrgl
 
 
 def add_options(subparser):
-    subparser.add_argument("grg_input", help="The input GRG file")
+    subparser.add_argument("grg_input", nargs="+", help="One or more input GRG files")
     subparser.add_argument(
         "-d",
         "--dimensions",
@@ -23,25 +23,48 @@ def add_options(subparser):
         help='Output filename to write the PCs to. Default: "<grg_input>.pcs.tsv"',
     )
     subparser.add_argument(
-        "--normalize",
+        "--no-normalize",
         action="store_true",
-        help="Normalize the PCs according to sqrt(eigenvalue) for each.",
+        help="Don't normalize the PCs according to sqrt(eigenvalue) for each.",
     )
     subparser.add_argument(
         "--pro-pca",
         action="store_true",
         help="Use the ProPCA algorithm to compute principle components.",
     )
+    subparser.add_argument(
+        "--sample-window",
+        type=int,
+        default=1,
+        help="If provided, defines a window width in base-pair. Within each window (starting at the"
+        "Mutation with the lowest coordinate) randomly choose a single SNP. This SNP set is used for PCA.",
+    )
+    subparser.add_argument(
+        "-j",
+        "--jobs",
+        type=int,
+        default=1,
+        help="Number of jobs (threads) to use. Will only use up to the number of GRG files. Default: 1",
+    )
 
 
 def run(args):
-    grg = pygrgl.load_immutable_grg(args.grg_input, load_up_edges=False)
+    grg_list = [
+        pygrgl.load_immutable_grg(gf, load_up_edges=False) for gf in args.grg_input
+    ]
     scores = PCs(
-        grg, k=args.dimensions, unitvar=args.normalize, use_pro_pca=args.pro_pca
+        grg_list,
+        k=args.dimensions,
+        unitvar=not args.no_normalize,
+        use_pro_pca=args.pro_pca,
+        sample_window=args.sample_window,
+        threads=args.jobs,
     )
 
     if args.pcs_out is None:
-        args.pcs_out = f"{os.path.basename(args.grg_input)}.pcs.tsv"
+        base = os.path.basename(args.grg_input[0])
+        suffix = ".and_others" if len(args.grg_input) > 1 else ""
+        args.pcs_out = f"{base}{suffix}.pcs.tsv"
     pandas_to_tsv(args.pcs_out, scores)
     print(f"Wrote PCs to {args.pcs_out}")
 
