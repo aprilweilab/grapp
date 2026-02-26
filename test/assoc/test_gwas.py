@@ -77,6 +77,7 @@ class TestGWAS(unittest.TestCase):
         # Compare against the baseline of known values. This is just a test to make sure
         # nothing changes.
         numpy.testing.assert_allclose(df_nonstd["BETA"], self.covar["BETA"])
+        numpy.testing.assert_allclose(df_nonstd["P"], self.covar["P"], rtol=0.01)
         df_nonstd_regress = linear_assoc_covar(self.grg, self.Y, C, method="regress")
 
         qr_nans = df_nonstd["BETA"].isna().sum()

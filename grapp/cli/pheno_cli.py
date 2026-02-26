@@ -16,6 +16,7 @@ def add_options(subparser):
     subparser.add_argument(
         "-n",
         "--num-causal",
+        type=int,
         default=None,
         help="Number of causal variants to simulate. Default: every variant is causal.",
     )

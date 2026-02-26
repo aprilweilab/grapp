@@ -400,7 +400,7 @@ def linear_assoc_covar(
     df = Yadj.shape[0] - Q.shape[1] - 1
     YY = Yadj.T @ Yadj
 
-    SSE = _div_or_default(YY - (xadjTyadj**2), xadjTxadj, math.nan)
+    SSE = YY - _div_or_default(xadjTyadj**2, xadjTxadj, math.nan)
     se = numpy.sqrt(numpy.abs(_div_or_default(SSE, (df * xadjTxadj), math.nan)))
     t_vals = beta / se
 
