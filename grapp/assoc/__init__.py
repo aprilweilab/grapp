@@ -330,11 +330,9 @@ def linear_assoc_covar(
         Y = Y.copy()
         Y[missing_indivs] = 0
 
-    # QR decompose the centered covariate matrix. The linear regression of Yadj and Xadj
-    # has an error term that is based on C and epsilon (the original, unadjusted error term).
-    # This new error term must be 0-centered, so we center C here.
-    centeredC = C - numpy.mean(C, axis=0)
-    Q, R = numpy.linalg.qr(centeredC)
+    # QR decompose the covariate matrix after adding an intercept column.
+    C_intercept = numpy.hstack([numpy.ones((C.shape[0], 1)), C])
+    Q, R = numpy.linalg.qr(C_intercept)
 
     # Compute Y adj
     Yadj = Y - Q @ (Q.T @ Y)
@@ -389,11 +387,8 @@ def linear_assoc_covar(
     # Compute (Xadj^TYadj)
     xadjTyadj = Yadj @ X_op
 
-    total_pheno = Y.sum()
-    nodeXY = xadjTyadj - n_j * x_mean * (total_pheno / n)
-    nodeXX = xadjTxadj - nx_mean * x_mean
     beta = numpy.zeros(XX.size)
-    beta = _div_or_default(nodeXY, nodeXX, math.nan)
+    beta = _div_or_default(xadjTyadj, xadjTxadj, math.nan)
     if only_beta:
         return pandas.DataFrame({"BETA": beta})
 
