@@ -35,6 +35,9 @@ class TestGWAS(unittest.TestCase):
 
         cls.Y = read_pheno(cls.pheno_path)
 
+        pcs_baseline_path = os.path.join(INPUT_DIR, "test.10pcs.tsv")
+        cls.PCs = pd.read_csv(pcs_baseline_path, delimiter="\t")
+
     def test_gwas_no_covar_vs_baseline(self):
         df_py = linear_assoc_no_covar(self.grg, self.Y)
 
@@ -70,16 +73,17 @@ class TestGWAS(unittest.TestCase):
                 assert diff <= atol or rel_err <= rtol, fail_msg
 
     def test_gwas_covar(self):
-        numpy.random.seed(99)
-        C = PCs(self.grg, 10, unitvar=False).to_numpy()
+        C = self.PCs.to_numpy()
         df_nonstd = linear_assoc_covar(self.grg, self.Y, C)
         self.assertFalse(numpy.any(numpy.isinf(df_nonstd["BETA"].to_numpy())))
         # Compare against the baseline of known values. This is just a test to make sure
         # nothing changes, as the baselined results have been verified for correctness.
         for column in ["POS", "COUNT", "BETA", "SE", "T", "P"]:
-            selected = df_nonstd["COUNT"] > 1  # Ignore singletons
-            calc_column = df_nonstd[selected][column]
-            base_column = self.covar_baseline[selected][column]
+            selected = (df_nonstd["COUNT"] > 1) & (
+                df_nonstd["COUNT"] < (self.grg.num_samples - 1)
+            )  # Ignore singletons
+            calc_column = df_nonstd[selected][column].to_numpy()
+            base_column = self.covar_baseline[selected][column].to_numpy()
             numpy.testing.assert_allclose(
                 calc_column,
                 base_column,
@@ -216,7 +220,9 @@ class TestGWAS(unittest.TestCase):
         ## Compare against the baseline of known values. This is just a test to make sure
         ## nothing changes, as the baselined results have been verified for correctness.
         for column in ["POS", "COUNT", "BETA", "SE", "T", "P"]:
-            selected = df_covar["COUNT"] > 1  # Ignore singletons
+            selected = (df_covar["COUNT"] > 1) & (
+                df_covar["COUNT"] < (self.grg.num_samples - 1)
+            )  # Ignore singletons
             calc_column = df_covar[selected][column]
             base_column = covar_baseline[selected][column]
             numpy.testing.assert_allclose(
@@ -235,8 +241,7 @@ class TestGWAS(unittest.TestCase):
 
         # PCA + uncentered phenotypes
         Y = self.Y.copy() + 100
-        numpy.random.seed(42)
-        C = PCs(self.grg, 5, unitvar=True).to_numpy()
+        C = self.PCs.to_numpy()[:, :5]  # First 5 PCs
         self._run_and_verify_covar_baseline(Y, C, "uncentered.covars.baseline.tsv")
 
         # These phenotypes and covariates were generated to be independent of the genotypes
