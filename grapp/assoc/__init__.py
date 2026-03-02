@@ -358,8 +358,6 @@ def linear_assoc_covar(
             haploid=False,
             mask_samples=missing_indivs,
         )
-        x_mean = numpy.zeros(afreq_diploid.shape)
-        nx_mean = numpy.zeros(acount.shape)
     else:
         X_op = SciPyXOperator(
             grg,
@@ -368,11 +366,8 @@ def linear_assoc_covar(
             miss_values=afreq_haploid,
             mask_samples=missing_indivs,
         )
-        x_mean = afreq_diploid  # 2*f_i
-        nx_mean = acount  # 2*n*f_i
 
     # G^TQ
-    ###Computes G^TQ where Q's rows are duplicated so we can get X^TQ
     XtQ = X_op.T @ Q
 
     # Diagonal of (X^TQ)(X^TQ)^T
