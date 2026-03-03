@@ -330,11 +330,9 @@ def linear_assoc_covar(
         Y = Y.copy()
         Y[missing_indivs] = 0
 
-    # QR decompose the centered covariate matrix. The linear regression of Yadj and Xadj
-    # has an error term that is based on C and epsilon (the original, unadjusted error term).
-    # This new error term must be 0-centered, so we center C here.
-    centeredC = C - numpy.mean(C, axis=0)
-    Q, R = numpy.linalg.qr(centeredC)
+    # QR decompose the covariate matrix after adding an intercept column.
+    C_intercept = numpy.hstack([numpy.ones((C.shape[0], 1)), C])
+    Q, R = numpy.linalg.qr(C_intercept)
 
     # Compute Y adj
     Yadj = Y - Q @ (Q.T @ Y)
@@ -360,8 +358,6 @@ def linear_assoc_covar(
             haploid=False,
             mask_samples=missing_indivs,
         )
-        x_mean = numpy.zeros(afreq_diploid.shape)
-        nx_mean = numpy.zeros(acount.shape)
     else:
         X_op = SciPyXOperator(
             grg,
@@ -370,11 +366,8 @@ def linear_assoc_covar(
             miss_values=afreq_haploid,
             mask_samples=missing_indivs,
         )
-        x_mean = afreq_diploid  # 2*f_i
-        nx_mean = acount  # 2*n*f_i
 
     # G^TQ
-    ###Computes G^TQ where Q's rows are duplicated so we can get X^TQ
     XtQ = X_op.T @ Q
 
     # Diagonal of (X^TQ)(X^TQ)^T
@@ -389,11 +382,8 @@ def linear_assoc_covar(
     # Compute (Xadj^TYadj)
     xadjTyadj = Yadj @ X_op
 
-    total_pheno = Y.sum()
-    nodeXY = xadjTyadj - n_j * x_mean * (total_pheno / n)
-    nodeXX = xadjTxadj - nx_mean * x_mean
     beta = numpy.zeros(XX.size)
-    beta = _div_or_default(nodeXY, nodeXX, math.nan)
+    beta = _div_or_default(xadjTyadj, xadjTxadj, math.nan)
     if only_beta:
         return pandas.DataFrame({"BETA": beta})
 

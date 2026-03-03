@@ -28,22 +28,24 @@ class TestGWAS(unittest.TestCase):
         assert os.path.isfile(cls.pheno_path)
 
         baseline_path = os.path.join(INPUT_DIR, "gwas.baseline.txt")
-        cls.gwas = pd.read_csv(baseline_path, delimiter="\t")
+        cls.gwas_baseline = pd.read_csv(baseline_path, delimiter="\t")
 
         covar_baseline_path = os.path.join(INPUT_DIR, "covar.baseline.txt")
-        cls.covar = pd.read_csv(covar_baseline_path, delimiter="\t")
+        cls.covar_baseline = pd.read_csv(covar_baseline_path, delimiter="\t")
 
         cls.Y = read_pheno(cls.pheno_path)
 
-    def test_gwas_no_covar_vs_grg(self):
+        pcs_baseline_path = os.path.join(INPUT_DIR, "test.10pcs.tsv")
+        cls.PCs = pd.read_csv(pcs_baseline_path, delimiter="\t")
+
+    def test_gwas_no_covar_vs_baseline(self):
         df_py = linear_assoc_no_covar(self.grg, self.Y)
-        df_grg = self.gwas
 
         # Check same number of rows
         self.assertEqual(
             len(df_py),
-            len(df_grg),
-            f"Mismatch in row count: Python has {len(df_py)}, GRG has {len(df_grg)}",
+            len(self.gwas_baseline),
+            f"Mismatch in row count: Python has {len(df_py)}, GRG has {len(self.gwas_baseline)}",
         )
 
         # Columns to compare
@@ -56,7 +58,7 @@ class TestGWAS(unittest.TestCase):
             should_be_nan = acount == 0 or acount == self.grg.num_samples
             for col in columns:
                 val_py = df_py.iloc[i][col]
-                val_grg = df_grg.iloc[i][col]
+                val_grg = self.gwas_baseline.iloc[i][col]
                 diff = abs(val_py - val_grg)
                 rel_err = diff / (abs(val_grg) + 1e-8)
                 fail_msg = (
@@ -71,13 +73,22 @@ class TestGWAS(unittest.TestCase):
                 assert diff <= atol or rel_err <= rtol, fail_msg
 
     def test_gwas_covar(self):
-        C = PCs(self.grg, 10, unitvar=False).to_numpy()
+        C = self.PCs.to_numpy()
         df_nonstd = linear_assoc_covar(self.grg, self.Y, C)
         self.assertFalse(numpy.any(numpy.isinf(df_nonstd["BETA"].to_numpy())))
         # Compare against the baseline of known values. This is just a test to make sure
-        # nothing changes.
-        numpy.testing.assert_allclose(df_nonstd["BETA"], self.covar["BETA"])
-        numpy.testing.assert_allclose(df_nonstd["P"], self.covar["P"], rtol=0.01)
+        # nothing changes, as the baselined results have been verified for correctness.
+        for column in ["POS", "COUNT", "BETA", "SE", "T", "P"]:
+            selected = (df_nonstd["COUNT"] > 1) & (
+                df_nonstd["COUNT"] < (self.grg.num_samples - 1)
+            )  # Ignore singletons
+            calc_column = df_nonstd[selected][column].to_numpy()
+            base_column = self.covar_baseline[selected][column].to_numpy()
+            numpy.testing.assert_allclose(
+                calc_column,
+                base_column,
+                err_msg=f"Failed on column: {column}",
+            )
         df_nonstd_regress = linear_assoc_covar(self.grg, self.Y, C, method="regress")
 
         qr_nans = df_nonstd["BETA"].isna().sum()
@@ -200,6 +211,52 @@ class TestGWAS(unittest.TestCase):
                     0.03609182039687409,
                 ],
             )
+
+    def _run_and_verify_covar_baseline(self, Y, C, baseline_name):
+        covar_baseline_path = os.path.join(INPUT_DIR, baseline_name)
+        covar_baseline = pd.read_csv(covar_baseline_path, delimiter="\t")
+        df_covar = linear_assoc_covar(self.grg, Y, C)
+        self.assertFalse(numpy.any(numpy.isinf(df_covar["BETA"].to_numpy())))
+        ## Compare against the baseline of known values. This is just a test to make sure
+        ## nothing changes, as the baselined results have been verified for correctness.
+        for column in ["POS", "COUNT", "BETA", "SE", "T", "P"]:
+            selected = (df_covar["COUNT"] > 1) & (
+                df_covar["COUNT"] < (self.grg.num_samples - 1)
+            )  # Ignore singletons
+            calc_column = df_covar[selected][column]
+            base_column = covar_baseline[selected][column]
+            numpy.testing.assert_allclose(
+                calc_column,
+                base_column,
+                err_msg=f"Failed on column {column}",
+            )
+
+    # Test a bunch of extra scenarios with covariates: uncentered phenotypes, non-standardized phenotypes,
+    # PCs as covariates, a binary covariate, etc.
+    def test_gwas_covar_extra(self):
+        # These covariates should change nothing about the GWAS
+        # XXX this one is too numerically unstable between different environments.
+        # C = numpy.ones((self.Y.shape[0], 1))
+        # self._run_and_verify_covar_baseline(self.Y, C, "noop.covars.baseline.tsv")
+
+        # PCA + uncentered phenotypes
+        Y = self.Y.copy() + 100
+        C = self.PCs.to_numpy()[:, :5]  # First 5 PCs
+        self._run_and_verify_covar_baseline(Y, C, "uncentered.covars.baseline.tsv")
+
+        # These phenotypes and covariates were generated to be independent of the genotypes
+        # but correlated with each other. The code was:
+        #    heritability = 0.33   # h^2
+        #    covar = ((numpy.random.uniform(size=(grg.num_individuals, 1)) > 0.5) * 1).astype(numpy.float64)
+        #    covar_effect = numpy.array([1000.0]) # Effect that the covariate has on the final phenotype value
+        #    phenotypes = add_covariates(grg, covar, covar_effect, random_seed=1942, heritability=heritability)
+        rc_Y = read_pheno(os.path.join(INPUT_DIR, "randcovar.phenotypes.txt"))
+        rc_C = pd.read_csv(
+            os.path.join(INPUT_DIR, "randcovar.covars.txt"), delimiter="\t"
+        )
+        print(rc_Y.shape)
+        print(rc_C.shape)
+        self._run_and_verify_covar_baseline(rc_Y, rc_C, "randcovar.covars.baseline.tsv")
 
     @classmethod
     def tearDownClass(cls):

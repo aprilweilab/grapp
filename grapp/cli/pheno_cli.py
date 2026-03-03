@@ -53,7 +53,7 @@ def run(args):
         num_causal=args.num_causal,
         random_seed=args.seed,
         normalize_phenotype=not args.no_normalize,
-        normalize_genetic_values_before_noise=True,
+        normalize_genetic_values_before_noise=not args.no_normalize,
         heritability=args.heritability,
         save_effect_output=bool(args.save_effects is not None),
         effect_path=args.save_effects,

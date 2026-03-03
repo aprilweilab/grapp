@@ -138,14 +138,14 @@ def add_options(subparser: argparse.ArgumentParser):
         "-m",
         "--min-alleles",
         type=int,
-        default=1,
+        default=None,
         help="Only keep sites with at least this many alleles. Counts all REF alleles as 1.",
     )
     mutation_group.add_argument(
         "-M",
         "--max-alleles",
         type=int,
-        default=2**32,
+        default=None,
         help="Only keep sites with at most this many alleles. Counts all REF alleles as 1. "
         "Use '-m 2 -M 2 -v snps' to view only biallelic SNPs.",
     )
@@ -168,7 +168,6 @@ def run(args):
             "min_af",
             "max_af",
             "types",
-            "apply_to_sites",
             "min_alleles",
             "max_alleles",
         )
@@ -189,6 +188,10 @@ def run(args):
             args.grg_input, args.grg_output, args.populations, verbose=True
         )
     else:
+        if args.min_alleles is None:
+            args.min_alleles = 1
+        if args.max_alleles is None:
+            args.max_alleles = 2**32
         if args.range is None:
             brange = (0, 0)
         else:
