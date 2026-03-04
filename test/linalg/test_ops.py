@@ -17,6 +17,7 @@ import os
 import pygrgl
 import sys
 import unittest
+import pytest
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(THIS_DIR, ".."))
@@ -454,9 +455,9 @@ class TestLinearOperators(unittest.TestCase):
         grg_result = rv @ X_nomiss_op.T
         self.assertFalse(numpy.allclose(numpy_result, grg_result))
 
-    def test_ignore_samples(self):
+    def test_filter_samples(self):
         """
-        We downsample a GRG explicitly, and then use an operator's mask to ignore the same individuals,
+        We downsample a GRG explicitly, and then use an operator's filter to ignore the same individuals,
         and expect the matrix multiplication should produce the same result.
         """
         keep_indivs, ignore_indivs, keep_samples, ignore_samples = complete_sample_sets(
@@ -468,33 +469,86 @@ class TestLinearOperators(unittest.TestCase):
         filt_grg = pygrgl.load_immutable_grg(filt_name, load_up_edges=False)
 
         K = 17
-        Y = numpy.random.standard_normal((K, self.grg.num_individuals))
-        sub_Y = Y[:, keep_indivs]
+        Y = numpy.random.standard_normal((K, len(keep_indivs)))
 
         # Non-standardized operator
         truth_op = SciPyXOperator(filt_grg, pygrgl.TraversalDirection.UP)
-        truth_matrix = sub_Y @ truth_op
+        truth_matrix = Y @ truth_op
         mask_op = SciPyXOperator(
-            self.grg, pygrgl.TraversalDirection.UP, mask_samples=ignore_indivs
+            self.grg,
+            pygrgl.TraversalDirection.UP,
+            sample_filter=keep_indivs,
         )
         mask_matrix = Y @ mask_op
         numpy.testing.assert_allclose(truth_matrix, mask_matrix)
 
         # Standardized operator
         truth_freqs = allele_frequencies(filt_grg)
-        mask_freqs = allele_frequencies(self.grg, mask_samples=ignore_samples)
+        mask_freqs = allele_frequencies(self.grg, sample_filter=keep_samples)
         numpy.testing.assert_allclose(truth_freqs, mask_freqs, atol=ABSOLUTE_TOLERANCE)
 
         truth_op = SciPyStdXOperator(
             filt_grg, pygrgl.TraversalDirection.UP, truth_freqs
         )
-        truth_matrix = sub_Y @ truth_op
+        truth_matrix = Y @ truth_op
         mask_op = SciPyStdXOperator(
             self.grg,
             pygrgl.TraversalDirection.UP,
             mask_freqs,
-            mask_samples=ignore_indivs,
+            sample_filter=keep_indivs,
         )
+        mask_matrix = Y @ mask_op
+        numpy.testing.assert_allclose(
+            truth_matrix, mask_matrix, atol=ABSOLUTE_TOLERANCE
+        )
+
+        # Now do some testing with the DOWN direction
+        Y = numpy.random.standard_normal((K, self.grg.num_mutations))
+
+        # Non-standardized operator
+        truth_op = SciPyXOperator(filt_grg, pygrgl.TraversalDirection.DOWN)
+        truth_matrix = Y @ truth_op
+        mask_op = SciPyXOperator(
+            self.grg,
+            pygrgl.TraversalDirection.DOWN,
+            sample_filter=keep_indivs,
+        )
+        mask_matrix = Y @ mask_op
+        numpy.testing.assert_allclose(truth_matrix, mask_matrix)
+
+        # Standardized operator
+        truth_freqs = allele_frequencies(filt_grg)
+        mask_freqs = allele_frequencies(self.grg, sample_filter=keep_samples)
+        numpy.testing.assert_allclose(truth_freqs, mask_freqs, atol=ABSOLUTE_TOLERANCE)
+
+        truth_op = SciPyStdXOperator(
+            filt_grg, pygrgl.TraversalDirection.DOWN, truth_freqs
+        )
+        truth_matrix = Y @ truth_op
+        mask_op = SciPyStdXOperator(
+            self.grg,
+            pygrgl.TraversalDirection.DOWN,
+            mask_freqs,
+            sample_filter=keep_indivs,
+        )
+        mask_matrix = Y @ mask_op
+        numpy.testing.assert_allclose(
+            truth_matrix, mask_matrix, atol=ABSOLUTE_TOLERANCE
+        )
+
+        # XTX
+        truth_op = SciPyXTXOperator(filt_grg)
+        truth_matrix = Y @ truth_op
+        mask_op = SciPyXTXOperator(self.grg, sample_filter=keep_indivs)
+        mask_matrix = Y @ mask_op
+        numpy.testing.assert_allclose(
+            truth_matrix, mask_matrix, atol=ABSOLUTE_TOLERANCE
+        )
+
+        # XTX standardized
+        truth_op = SciPyStdXTXOperator(filt_grg, truth_freqs)
+        truth_matrix = Y @ truth_op
+        mask_op = SciPyStdXTXOperator(self.grg, mask_freqs, sample_filter=keep_indivs)
         mask_matrix = Y @ mask_op
         numpy.testing.assert_allclose(
             truth_matrix, mask_matrix, atol=ABSOLUTE_TOLERANCE

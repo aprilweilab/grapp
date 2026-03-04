@@ -3,7 +3,7 @@ Simple utility functions.
 """
 
 from enum import Enum
-from typing import Union, Tuple, List
+from typing import Union, Tuple, List, Optional
 import pygrgl
 import numpy
 
@@ -37,7 +37,7 @@ def _div_or_default(a, b, d):
 def allele_counts(
     grg: pygrgl.GRG,
     return_missing: bool = False,
-    mask_samples: Union[List[int], numpy.typing.NDArray] = [],
+    sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
 ) -> Union[numpy.typing.NDArray, Tuple[numpy.typing.NDArray, numpy.typing.NDArray]]:
     """
     Get the allele counts for the mutations in the given GRG.
@@ -46,26 +46,30 @@ def allele_counts(
     :type grg: pygrgl.GRG
     :param return_missing: Return two arrays: the allele counts, and the missingness counts.
     :type return_missing: bool
-    :param sample_filter: Optional. Restrict the counts to a subset of samples, listed by sample node ID.
-    :type sample_filter: List[int]
-    :param mask_samples: Ignore any contribution from the samples listed in this array.
-    :type mask_samples: Union[List[int], numpy.typing.NDArray]
+    :param sample_filter: Only consider the samples listed in the filter. Default: no filter.
+    :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     :return: A vector of length grg.num_mutations, containing allele counts
         indexed by MutationID.
     :rtype: numpy.ndarray
     """
-    assert (
-        isinstance(mask_samples, list) or mask_samples.ndim == 1
-    ), "mask_samples must be a list or 1D array"
+    if isinstance(sample_filter, numpy.ndarray):
+        sample_filter = sample_filter.tolist()
+    if sample_filter is not None:
+        assert len(set(sample_filter)) == len(
+            sample_filter
+        ), "Duplicate IDs in sample_filter"
+        assert len(sample_filter) <= grg.num_samples
     kwargs = {}
     if return_missing:
         miss_counts = numpy.zeros((1, grg.num_mutations), dtype=numpy.int32)
         kwargs["miss"] = miss_counts
     else:
         miss_counts = None
-    input_mat = numpy.ones((1, grg.num_samples), dtype=numpy.int32)
-    if mask_samples:
-        input_mat[:, mask_samples] = 0
+    if sample_filter is not None:
+        input_mat = numpy.zeros((1, grg.num_samples), dtype=numpy.int32)
+        input_mat[:, sample_filter] = 1
+    else:
+        input_mat = numpy.ones((1, grg.num_samples), dtype=numpy.int32)
     acounts = pygrgl.matmul(grg, input_mat, pygrgl.TraversalDirection.UP, **kwargs)[0]
     if miss_counts is not None:
         miss_counts = miss_counts[0]
@@ -77,7 +81,7 @@ def allele_counts(
 def allele_frequencies(
     grg: pygrgl.GRG,
     adjust_missing: bool = False,
-    mask_samples: Union[List[int], numpy.typing.NDArray] = [],
+    sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
 ) -> numpy.typing.NDArray:
     """
     Get the allele frequencies for the mutations in the given GRG.
@@ -87,8 +91,8 @@ def allele_frequencies(
     :param adjust_missing: Optional. Set to true to adjust each allele frequncies to be
         :math:`\\frac{count_i}{total - missing_i}` instead of :math:`\\frac{count_i}{total}`.
     :type adjust_missing: bool
-    :param mask_samples: Ignore any contribution from the samples listed in this array.
-    :type mask_samples: Union[List[int], numpy.typing.NDArray]
+    :param sample_filter: Only consider the samples listed in the filter. Default: no filter.
+    :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     :return: A vector of length grg.num_mutations, containing allele frequencies
         indexed by MutationID.
     :rtype: numpy.ndarray
@@ -96,14 +100,15 @@ def allele_frequencies(
     with numpy.errstate(divide="raise"):
         if adjust_missing:
             acounts, miss_counts = allele_counts(
-                grg, return_missing=True, mask_samples=mask_samples
+                grg, return_missing=True, sample_filter=sample_filter
             )
         else:
             acounts = allele_counts(
-                grg, return_missing=False, mask_samples=mask_samples
+                grg, return_missing=False, sample_filter=sample_filter
             )
             miss_counts = 0
-        denominator = grg.num_samples - miss_counts - len(mask_samples)
+        num_samples = grg.num_samples if sample_filter is None else len(sample_filter)
+        denominator = num_samples - miss_counts
         assert numpy.all(denominator >= 0)
         return numpy.divide(
             acounts,
@@ -117,7 +122,7 @@ def variance(
     grg: pygrgl.GRG,
     dist: str = _GenotypeDist.BINOMIAL.value,
     adjust_missing: bool = False,
-    mask_samples: Union[List[int], numpy.typing.NDArray] = [],
+    sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
     haploid: bool = False,
 ):
     """
@@ -131,15 +136,15 @@ def variance(
     :param adjust_missing: Optional. Set to true to adjust each allele frequncy to be
         :math:`\\frac{count_i}{total - missing_i}` instead of :math:`\\frac{count_i}{total}`.
     :type adjust_missing: bool
-    :param mask_samples: Ignore any contribution from the samples listed in this array.
-    :type mask_samples: Union[List[int], numpy.typing.NDArray]
+    :param sample_filter: Only consider the samples listed in the filter. Default: no filter.
+    :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     :return: A vector of length grg.num_mutations, containing allele frequencies
         indexed by MutationID.
     :rtype: numpy.ndarray
     """
     mult_const = 1 if haploid else grg.ploidy
     acount, miss_count = allele_counts(
-        grg, return_missing=True, mask_samples=mask_samples
+        grg, return_missing=True, sample_filter=sample_filter
     )
     n_j = (
         (grg.num_samples - miss_count)
