@@ -45,7 +45,6 @@ def add_options(subparser):
 
 def run(args):
     base = os.path.basename(args.grg_input)
-    effect_path = f"{base}.effects.par"
     output_path = f"{base}.phen"
     grg = pygrgl.load_immutable_grg(args.grg_input, load_up_edges=False)
     phenotypes = sim_phenotypes(

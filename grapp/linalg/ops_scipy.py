@@ -27,6 +27,72 @@ def _transpose_shape(shape: Tuple[int, int]) -> Tuple[int, int]:
     return (shape[1], shape[0])
 
 
+class GRGOpFilter:
+    def __init__(
+        self,
+        grg: pygrgl.GRG,
+        haploid: bool,
+        mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]],
+        sample_filter: Optional[Union[List[int], numpy.typing.NDArray]],
+    ):
+        if mutation_filter is not None:
+            if isinstance(mutation_filter, numpy.ndarray):
+                mutation_filter = mutation_filter.tolist()
+            assert len(set(mutation_filter)) == len(
+                mutation_filter
+            ), "Duplicate IDs in mutation_filter"
+        self.mutation_filter = mutation_filter
+        if sample_filter is not None:
+            if isinstance(sample_filter, numpy.ndarray):
+                sample_filter = sample_filter.tolist()
+            assert len(set(sample_filter)) == len(
+                sample_filter
+            ), "Duplicate IDs in sample_filter"
+        self.sample_filter = sample_filter
+
+        sample_count = grg.num_samples if haploid else grg.num_individuals
+        self.grg_shape = (sample_count, grg.num_mutations)
+        self.shape = (
+            self.grg_shape[0] if sample_filter is None else len(sample_filter),
+            self.grg_shape[1] if mutation_filter is None else len(mutation_filter),
+        )
+        self.is_filtering = (
+            self.sample_filter is not None or self.mutation_filter is not None
+        )
+
+    def prep_input(
+        self, input_matrix: numpy.typing.NDArray, mult_dir: TraversalDirection
+    ):
+        if mult_dir == _DOWN:
+            if self.mutation_filter is not None:
+                new_matrix = numpy.zeros(
+                    (input_matrix.shape[0], self.grg_shape[1]), dtype=input_matrix.dtype
+                )
+                new_matrix[:, self.mutation_filter] = input_matrix  # type: ignore
+                return new_matrix
+        else:
+            assert mult_dir == _UP
+            if self.sample_filter is not None:
+                new_matrix = numpy.zeros(
+                    (input_matrix.shape[0], self.grg_shape[0]), dtype=input_matrix.dtype
+                )
+                new_matrix[:, self.sample_filter] = input_matrix  # type: ignore
+                return new_matrix
+        return input_matrix
+
+    def adjust_output(
+        self, output_matrix: numpy.typing.NDArray, mult_dir: TraversalDirection
+    ):
+        if mult_dir == _UP:
+            if self.mutation_filter is not None:
+                return output_matrix[:, self.mutation_filter]
+        else:
+            assert mult_dir == _DOWN
+            if self.sample_filter is not None:
+                return output_matrix[:, self.sample_filter]
+        return output_matrix
+
+
 class SciPyXOperator(LinearOperator):
     """
     A scipy.sparse.linalg.LinearOperator on the genotype matrix represented by the GRG, which allows for
@@ -50,12 +116,11 @@ class SciPyXOperator(LinearOperator):
         (e.g., missingness-adjusted allele frequency) is provided. Default: None.
     :type miss_values: Optional[numpy.typing.NDArray]
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
-        mutation_filter) instead of NxM. Default: empty filter.
+        mutation_filter) instead of NxM. Default: no filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
-    :param mask_samples: Ignore any contribution from the samples listed in this array (e.g., pretend
-        they don't exist in the GRG). This does not affect the dimensions of the multiplication operations.
-        If haploid=True, these should be sample node IDs. Otherwise, they should be individual IDs.
-    :type mask_samples: Union[List[int], numpy.typing.NDArray]
+    :param sample_filter: Changes the dimensions of :math:`X` to be QxM (where Q is the length of
+        sample_filter) instead of NxM. Default: no filter.
+    :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     """
 
     def __init__(
@@ -66,28 +131,17 @@ class SciPyXOperator(LinearOperator):
         haploid: bool = False,
         miss_values: Optional[numpy.typing.NDArray] = None,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
-        mask_samples: Union[List[int], numpy.typing.NDArray] = [],
+        sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
     ):
-        if isinstance(mutation_filter, numpy.ndarray):
-            mutation_filter = mutation_filter.tolist()
+        self.filter = GRGOpFilter(grg, haploid, mutation_filter, sample_filter)
         self.haploid = haploid
         self.grg = grg
-        self.sample_count = grg.num_samples if haploid else grg.num_individuals
         self.direction = direction
-        self.mutation_filter = mutation_filter
-        if isinstance(mask_samples, numpy.ndarray):
-            mask_samples = mask_samples.tolist()
-        self.mask_samples = mask_samples
-        self.grg_shape = (self.sample_count, grg.num_mutations)
-        shape = (
-            self.grg_shape
-            if mutation_filter is None
-            else (self.grg_shape[0], len(self.mutation_filter))  # type: ignore
-        )
         assert (
             miss_values is None or miss_values.ndim == 1
         ), 'If "miss_values" is provided, it must be a vector'
         self.miss_values = miss_values
+        shape = self.filter.shape
         if self.direction == _DOWN:
             shape = _transpose_shape(shape)
         super().__init__(dtype=dtype, shape=shape)
@@ -96,21 +150,7 @@ class SciPyXOperator(LinearOperator):
         self, other_matrix: numpy.typing.NDArray, mult_dir: TraversalDirection
     ):
         kwargs = {}
-        if self.mutation_filter is not None and mult_dir == _DOWN:
-            A = numpy.zeros(
-                (other_matrix.shape[1], self.grg_shape[1]), dtype=other_matrix.dtype
-            )
-            A[:, self.mutation_filter] = other_matrix.T  # type: ignore
-        else:
-            A = other_matrix.T
-
-        # Notice: if this operator is used by another operator that modifies A (e.g., the standardized
-        # operators) this still works, because we 0 the value out right before the multiplication, treating
-        # these samples like they truly do not exist in the graph.
-        if mult_dir == _UP and self.mask_samples:
-            if A is other_matrix.T:
-                A = other_matrix.T.copy()
-            A[:, self.mask_samples] = 0
+        A = self.filter.prep_input(other_matrix.T, mult_dir)
 
         # When doing the multiplication AX^T (DOWN), we need to initialize the missingness node
         # data values ("miss") with the input matrix * the missingness mean values per mutation.
@@ -135,10 +175,7 @@ class SciPyXOperator(LinearOperator):
         if mult_dir == _UP and use_M:
             result += M * self.miss_values
 
-        Y = result
-        if self.mutation_filter is not None and mult_dir == _UP:
-            Y = Y[:, self.mutation_filter]  # type: ignore
-        return Y.T
+        return self.filter.adjust_output(result, mult_dir).T
 
     def _matmat(self, other_matrix):
         return self._matmat_helper(other_matrix, _flip_dir(self.direction))
@@ -178,8 +215,11 @@ class SciPyXTXOperator(LinearOperator):
         (e.g., missingness-adjusted allele frequency) is provided. Default: None.
     :type miss_values: Optional[numpy.typing.NDArray]
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
-        mutation_filter) instead of NxM. Default: empty filter.
+        mutation_filter) instead of NxM. Default: no filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
+    :param sample_filter: Changes the dimensions of :math:`X` to be QxM (where Q is the length of
+        sample_filter) instead of NxM. Default: no filter.
+    :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     """
 
     def __init__(
@@ -189,14 +229,8 @@ class SciPyXTXOperator(LinearOperator):
         haploid: bool = False,
         miss_values: Optional[numpy.typing.NDArray] = None,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
+        sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
     ):
-        if isinstance(mutation_filter, numpy.ndarray):
-            mutation_filter = mutation_filter.tolist()
-        num_muts = (
-            grg.num_mutations if mutation_filter is None else len(mutation_filter)
-        )
-        xtx_shape = (num_muts, num_muts)
-        super().__init__(dtype=dtype, shape=xtx_shape)
         self.x_op = SciPyXOperator(
             grg,
             _UP,
@@ -204,7 +238,10 @@ class SciPyXTXOperator(LinearOperator):
             haploid=haploid,
             miss_values=miss_values,
             mutation_filter=mutation_filter,
+            sample_filter=sample_filter,
         )
+        xtx_shape = (self.x_op.shape[1], self.x_op.shape[1])
+        super().__init__(dtype=dtype, shape=xtx_shape)
 
     def _matmat(self, other_matrix):
         D = self.x_op._matmat(other_matrix)
@@ -244,8 +281,11 @@ class SciPyXXTOperator(LinearOperator):
         (e.g., missingness-adjusted allele frequency) is provided. Default: None.
     :type miss_values: Optional[numpy.typing.NDArray]
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
-        mutation_filter) instead of NxM. Default: empty filter.
+        mutation_filter) instead of NxM. Default: no filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
+    :param sample_filter: Changes the dimensions of :math:`X` to be QxM (where Q is the length of
+        sample_filter) instead of NxM. Default: no filter.
+    :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     """
 
     def __init__(
@@ -255,12 +295,8 @@ class SciPyXXTOperator(LinearOperator):
         haploid: bool = False,
         miss_values: Optional[numpy.typing.NDArray] = None,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
+        sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
     ):
-        if isinstance(mutation_filter, numpy.ndarray):
-            mutation_filter = mutation_filter.tolist()
-        sample_count = grg.num_samples if haploid else grg.num_individuals
-        xxt_shape = (sample_count, sample_count)
-        super().__init__(dtype=dtype, shape=xxt_shape)
         self.x_op = SciPyXOperator(
             grg,
             _UP,
@@ -268,7 +304,10 @@ class SciPyXXTOperator(LinearOperator):
             haploid=haploid,
             miss_values=miss_values,
             mutation_filter=mutation_filter,
+            sample_filter=sample_filter,
         )
+        xxt_shape = (self.x_op.shape[0], self.x_op.shape[0])
+        super().__init__(dtype=dtype, shape=xxt_shape)
 
     def _matmat(self, other_matrix):
         D = self.x_op._rmatmat(other_matrix)
@@ -303,11 +342,8 @@ class _SciPyStandardizedOperator(LinearOperator):
         self.grg = grg
         self.freqs = freqs
         self.mult_const = 1 if self.haploid else grg.ploidy
-        self.sample_count = grg.num_samples if haploid else grg.num_individuals
 
-        # TODO: there might be other normalization approachs besides this. For example, FlashPCA2 has different
-        # options for what to use (this is the P-trial binomial, where P is either ploidy or 1 if haploid is set
-        # to True).
+        # TODO: we also want to support sample-based variance calculation, using init=xtx
         raw = self.mult_const * self.freqs * (1.0 - self.freqs)
 
         # Two versions of sigma, the second flips 0 values (which means the frequency was
@@ -346,12 +382,11 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
         genotype matrix. Default: False.
     :type haploid: bool
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
-        mutation_filter) instead of NxM. Only keep mutations with IDs in mutation_filter. Default: empty filter.
+        mutation_filter) instead of NxM. Default: no filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
-    :param mask_samples: Ignore any contribution from the samples listed in this array (e.g., pretend
-        they don't exist in the GRG). This does not affect the dimensions of the multiplication operations.
-        If haploid=True, these should be sample node IDs. Otherwise, they should be individual IDs.
-    :type mask_samples: Union[List[int], numpy.typing.NDArray]
+    :param sample_filter: Changes the dimensions of :math:`X` to be QxM (where Q is the length of
+        sample_filter) instead of NxM. Default: no filter.
+    :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     """
 
     def __init__(
@@ -362,46 +397,23 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
-        mask_samples: Union[List[int], numpy.typing.NDArray] = [],
+        sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
     ):
-        if isinstance(mutation_filter, numpy.ndarray):
-            mutation_filter = mutation_filter.tolist()
+        self.filter = GRGOpFilter(grg, haploid, mutation_filter, sample_filter)
         self.direction = direction
-        self.sample_count = grg.num_samples if haploid else grg.num_individuals
-        self.mutation_filter = mutation_filter
-        if isinstance(mask_samples, numpy.ndarray):
-            mask_samples = mask_samples.tolist()
-        self.mask_samples = mask_samples
-        self.grg_shape = (self.sample_count, grg.num_mutations)
-        shape = (
-            self.grg_shape
-            if mutation_filter is None
-            else (self.grg_shape[0], len(self.mutation_filter))  # type: ignore
-        )
+        shape = self.filter.shape
         if self.direction == _DOWN:
             shape = _transpose_shape(shape)
         super().__init__(grg, freqs, shape, dtype=dtype, haploid=haploid)
 
     def _matmat_direction(self, other_matrix, direction):
         mult_dir = _flip_dir(direction)
-
-        def expandm(matrix):
-            if self.mutation_filter is not None and mult_dir == _DOWN:
-                result = numpy.zeros(
-                    (matrix.shape[0], self.grg_shape[1]), dtype=matrix.dtype
-                )
-                result[:, self.mutation_filter] = matrix  # type: ignore
-                return result
-            return matrix
-
-        def contractm(matrix):
-            if self.mutation_filter is not None and mult_dir == _UP:
-                return matrix[:, self.mutation_filter]  # type: ignore
-            return matrix
-
         with numpy.errstate(divide="raise"):
             if direction == _UP:
-                vS = expandm(other_matrix.T) / self.sigma_corrected
+                vS = (
+                    self.filter.prep_input(other_matrix.T, mult_dir)
+                    / self.sigma_corrected
+                )
                 XvS = pygrgl.matmul(
                     self.grg,
                     vS,
@@ -411,13 +423,10 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
                 consts = numpy.array(
                     [numpy.sum(self.mult_const * self.freqs * vS, axis=1)]
                 ).T
-                return contractm(XvS - consts).T
+                return self.filter.adjust_output(XvS - consts, mult_dir).T
             else:
                 assert direction == _DOWN
-                m = expandm(other_matrix.T)
-                if self.mask_samples:
-                    m = m.copy() if m is other_matrix.T else m
-                    m[:, self.mask_samples] = 0
+                m = self.filter.prep_input(other_matrix.T, mult_dir)
                 SXv = (
                     pygrgl.matmul(
                         self.grg,
@@ -431,7 +440,7 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
                 sub_const2 = (
                     self.mult_const * self.freqs / self.sigma_corrected
                 ) * col_const
-                return contractm(SXv - sub_const2).T
+                return self.filter.adjust_output(SXv - sub_const2, mult_dir).T
 
     def _matmat(self, other_matrix):
         return self._matmat_direction(other_matrix, self.direction)
@@ -477,8 +486,11 @@ class SciPyStdXTXOperator(LinearOperator):
         genotype matrix. Default: False.
     :type haploid: bool
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
-        mutation_filter) instead of NxM. Default: empty filter.
+        mutation_filter) instead of NxM. Default: no filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
+    :param sample_filter: Changes the dimensions of :math:`X` to be QxM (where Q is the length of
+        sample_filter) instead of NxM. Default: no filter.
+    :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     """
 
     def __init__(
@@ -488,14 +500,9 @@ class SciPyStdXTXOperator(LinearOperator):
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
+        sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
     ):
-        if isinstance(mutation_filter, numpy.ndarray):
-            mutation_filter = mutation_filter.tolist()
-        num_muts = (
-            grg.num_mutations if mutation_filter is None else len(mutation_filter)
-        )
-        xtx_shape = (num_muts, num_muts)
-        super().__init__(dtype=dtype, shape=xtx_shape)
+        self.filter = GRGOpFilter(grg, haploid, mutation_filter, sample_filter)
         self.std_x_op = SciPyStdXOperator(
             grg,
             _UP,
@@ -503,7 +510,10 @@ class SciPyStdXTXOperator(LinearOperator):
             haploid=haploid,
             dtype=dtype,
             mutation_filter=mutation_filter,
+            sample_filter=sample_filter,
         )
+        xtx_shape = (self.std_x_op.shape[1], self.std_x_op.shape[1])
+        super().__init__(dtype=dtype, shape=xtx_shape)
 
     def _matmat(self, other_matrix):
         D = self.std_x_op._matmat(other_matrix)
@@ -545,6 +555,12 @@ class SciPyStdXXTOperator(LinearOperator):
     :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
         genotype matrix. Default: False.
     :type haploid: bool
+    :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
+        mutation_filter) instead of NxM. Default: no filter.
+    :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
+    :param sample_filter: Changes the dimensions of :math:`X` to be QxM (where Q is the length of
+        sample_filter) instead of NxM. Default: no filter.
+    :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     """
 
     def __init__(
@@ -553,11 +569,20 @@ class SciPyStdXXTOperator(LinearOperator):
         freqs: numpy.typing.NDArray,
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
+        mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
+        sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
     ):
-        self.sample_count = grg.num_samples if haploid else grg.num_individuals
-        xxt_shape = (self.sample_count, self.sample_count)
+        self.std_x_op = SciPyStdXOperator(
+            grg,
+            _UP,
+            freqs,
+            haploid=haploid,
+            dtype=dtype,
+            mutation_filter=mutation_filter,
+            sample_filter=sample_filter,
+        )
+        xxt_shape = (self.std_x_op.shape[0], self.std_x_op.shape[0])
         super().__init__(dtype=dtype, shape=xxt_shape)
-        self.std_x_op = SciPyStdXOperator(grg, _UP, freqs, haploid=haploid, dtype=dtype)
 
     def _matmat(self, other_matrix):
         D = self.std_x_op._rmatmat(other_matrix)
@@ -599,8 +624,16 @@ class MultiSciPyXOperator(LinearOperator):
         (e.g., missingness-adjusted allele frequency) is provided. Default: None.
     :type miss_values: Optional[numpy.typing.NDArray]
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
-        mutation_filter) instead of NxM. Default: empty filter.
+        mutation_filter) instead of NxM. Here the mutation filter follows the same numbering as the
+        input/output matrices: for example, if grgs=[grg1, grg2] then indexes 0...(grg1.num_mutations-1)
+        will be for grg1, and grg1.num_mutations...(grg1.num_mutations+grg2.num_mutations-1) will be the
+        mutations for grg2. Then if you have a mutation_filter containing the number ``grg1.num_mutations + 4``
+        it means it will keep grg2's mutation with ID ``4``. Default: no filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
+    :param sample_filter: Changes the dimensions of :math:`X` to be QxM (where Q is the length of
+        sample_filter) instead of NxM. Since all GRGs have the same samples, this behavior is the
+        same as the non-Multi operators. Default: no filter.
+    :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     :param threads: Number of threads for performing the multiplication. Each GRG can be done in
         parallel.
     :type threads: int
@@ -614,32 +647,30 @@ class MultiSciPyXOperator(LinearOperator):
         haploid: bool = False,
         miss_values: Optional[numpy.typing.NDArray] = None,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
+        sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
     ):
-        if isinstance(mutation_filter, numpy.ndarray):
-            mutation_filter = mutation_filter.tolist()
         assert len(grgs) >= 1, "Must provide at least one GRG"
         self.direction = direction
         self.num_mutations = sum([g.num_mutations for g in grgs])
-        self.mutation_filter = mutation_filter
-        if self.mutation_filter is not None:
-            assert len(self.mutation_filter) <= self.num_mutations
-            self.num_mutations = len(self.mutation_filter)
+        if mutation_filter is not None:
+            assert len(mutation_filter) <= self.num_mutations
+            self.num_mutations = len(mutation_filter)
         self.operators = []
-        num_samples = grgs[0].num_samples
-        num_indivs = grgs[0].num_individuals
         prev_miss_start = 0
         prev_max_mut = 0
         for g in grgs:
-            assert g.num_samples == num_samples, "All GRGs must use the same samples"
-            if self.mutation_filter is not None:
+            assert (
+                g.num_samples == grgs[0].num_samples
+            ), "All GRGs must use the same samples"
+            if mutation_filter is not None:
                 grg_mut_filt = list(
                     map(
                         lambda m: m - prev_max_mut,
                         filter(
                             lambda m: m >= prev_max_mut
                             and m < prev_max_mut + g.num_mutations,
-                            self.mutation_filter,
+                            mutation_filter,
                         ),
                     )
                 )
@@ -667,16 +698,25 @@ class MultiSciPyXOperator(LinearOperator):
                         haploid=haploid,
                         miss_values=grg_miss_values,
                         mutation_filter=grg_mut_filt,
+                        sample_filter=sample_filter,
                     )
                 )
             prev_max_mut += g.num_mutations
         # Should we concatenate the result for _matmat, or add them together?
         self.concat = self.direction == pygrgl.TraversalDirection.DOWN
         self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
-        sample_count = num_samples if haploid else num_indivs
-        shape = (sample_count, self.num_mutations)
-        if direction == _DOWN:
-            shape = _transpose_shape(shape)
+        shape = (self.operators[0].shape[0], self.num_mutations)
+        if direction == _UP:
+            shape = (
+                self.operators[0].shape[0],
+                sum(map(lambda op: op.shape[1], self.operators)),
+            )
+        else:
+            assert direction == _DOWN
+            shape = (
+                sum(map(lambda op: op.shape[0], self.operators)),
+                self.operators[0].shape[1],
+            )
         super().__init__(dtype=dtype, shape=shape)
 
     def _matmat_helper(self, other_matrix, direction, op_method):
@@ -743,8 +783,16 @@ class MultiSciPyXTXOperator(LinearOperator):
         (e.g., missingness-adjusted allele frequency) is provided. Default: None.
     :type miss_values: Optional[numpy.typing.NDArray]
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
-        mutation_filter) instead of NxM. Default: empty filter.
+        mutation_filter) instead of NxM. Here the mutation filter follows the same numbering as the
+        input/output matrices: for example, if grgs=[grg1, grg2] then indexes 0...(grg1.num_mutations-1)
+        will be for grg1, and grg1.num_mutations...(grg1.num_mutations+grg2.num_mutations-1) will be the
+        mutations for grg2. Then if you have a mutation_filter containing the number ``grg1.num_mutations + 4``
+        it means it will keep grg2's mutation with ID ``4``. Default: no filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
+    :param sample_filter: Changes the dimensions of :math:`X` to be QxM (where Q is the length of
+        sample_filter) instead of NxM. Since all GRGs have the same samples, this behavior is the
+        same as the non-Multi operators. Default: no filter.
+    :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     :param threads: Number of threads for performing the multiplication. Each GRG can be done in
         parallel.
     :type threads: int
@@ -757,6 +805,7 @@ class MultiSciPyXTXOperator(LinearOperator):
         haploid: bool = False,
         miss_values: Optional[numpy.typing.NDArray] = None,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
+        sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
     ):
         self.x_op = MultiSciPyXOperator(
@@ -766,9 +815,10 @@ class MultiSciPyXTXOperator(LinearOperator):
             haploid=haploid,
             miss_values=miss_values,
             mutation_filter=mutation_filter,
+            sample_filter=sample_filter,
             threads=threads,
         )
-        xtx_shape = (self.x_op.num_mutations, self.x_op.num_mutations)
+        xtx_shape = (self.x_op.shape[1], self.x_op.shape[1])
         super().__init__(dtype=dtype, shape=xtx_shape)
 
     def _matmat(self, other_matrix):
@@ -807,8 +857,16 @@ class MultiSciPyStdXOperator(LinearOperator):
         genotype matrix. Default: False.
     :type haploid: bool
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
-        mutation_filter) instead of NxM. Default: empty filter.
+        mutation_filter) instead of NxM. Here the mutation filter follows the same numbering as the
+        input/output matrices: for example, if grgs=[grg1, grg2] then indexes 0...(grg1.num_mutations-1)
+        will be for grg1, and grg1.num_mutations...(grg1.num_mutations+grg2.num_mutations-1) will be the
+        mutations for grg2. Then if you have a mutation_filter containing the number ``grg1.num_mutations + 4``
+        it means it will keep grg2's mutation with ID ``4``. Default: no filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
+    :param sample_filter: Changes the dimensions of :math:`X` to be QxM (where Q is the length of
+        sample_filter) instead of NxM. Since all GRGs have the same samples, this behavior is the
+        same as the non-Multi operators. Default: no filter.
+    :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     :param threads: Number of threads for performing the multiplication. Each GRG can be done in
         parallel.
     :type threads: int
@@ -822,32 +880,30 @@ class MultiSciPyStdXOperator(LinearOperator):
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
+        sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
     ):
-        if isinstance(mutation_filter, numpy.ndarray):
-            mutation_filter = mutation_filter.tolist()
         assert len(grgs) >= 1, "Must provide at least one GRG"
         assert len(grgs) == len(freqs), "Must provide allele frequencies for every GRG"
         self.direction = direction
         self.num_mutations = sum([g.num_mutations for g in grgs])
         num_samples = grgs[0].num_samples
         num_indivs = grgs[0].num_individuals
-        self.mutation_filter = mutation_filter
         if mutation_filter is not None:
-            assert len(self.mutation_filter) <= self.num_mutations  # type: ignore
-            self.num_mutations = len(self.mutation_filter)  # type: ignore
+            assert len(mutation_filter) <= self.num_mutations  # type: ignore
+            self.num_mutations = len(mutation_filter)  # type: ignore
         prev_max_mut = 0
         self.operators = []
         for g, f in zip(grgs, freqs):
             assert g.num_samples == num_samples, "All GRGs must use the same samples"
-            if self.mutation_filter is not None:
+            if mutation_filter is not None:
                 grg_mut_filt = list(
                     map(
                         lambda m: m - prev_max_mut,
                         filter(
                             lambda m: m >= prev_max_mut
                             and m < prev_max_mut + g.num_mutations,
-                            self.mutation_filter,
+                            mutation_filter,
                         ),
                     )
                 )
@@ -865,6 +921,7 @@ class MultiSciPyStdXOperator(LinearOperator):
                         dtype,
                         haploid=haploid,
                         mutation_filter=grg_mut_filt,
+                        sample_filter=sample_filter,
                     )
                 )
             prev_max_mut += g.num_mutations
@@ -939,8 +996,16 @@ class MultiSciPyStdXTXOperator(LinearOperator):
         genotype matrix. Default: False.
     :type haploid: bool
     :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
-        mutation_filter) instead of NxM. Default: empty filter.
+        mutation_filter) instead of NxM. Here the mutation filter follows the same numbering as the
+        input/output matrices: for example, if grgs=[grg1, grg2] then indexes 0...(grg1.num_mutations-1)
+        will be for grg1, and grg1.num_mutations...(grg1.num_mutations+grg2.num_mutations-1) will be the
+        mutations for grg2. Then if you have a mutation_filter containing the number ``grg1.num_mutations + 4``
+        it means it will keep grg2's mutation with ID ``4``. Default: no filter.
     :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
+    :param sample_filter: Changes the dimensions of :math:`X` to be QxM (where Q is the length of
+        sample_filter) instead of NxM. Since all GRGs have the same samples, this behavior is the
+        same as the non-Multi operators. Default: no filter.
+    :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
     :param threads: Number of threads for performing the multiplication. Each GRG can be done in
         parallel.
     :type threads: int
@@ -953,6 +1018,7 @@ class MultiSciPyStdXTXOperator(LinearOperator):
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
+        sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
     ):
         self.std_x_op = MultiSciPyStdXOperator(
@@ -962,9 +1028,10 @@ class MultiSciPyStdXTXOperator(LinearOperator):
             haploid=haploid,
             dtype=dtype,
             mutation_filter=mutation_filter,
+            sample_filter=sample_filter,
             threads=threads,
         )
-        xtx_shape = (self.std_x_op.num_mutations, self.std_x_op.num_mutations)
+        xtx_shape = (self.std_x_op.shape[1], self.std_x_op.shape[1])
         super().__init__(dtype=dtype, shape=xtx_shape)
 
     def _matmat(self, other_matrix):
