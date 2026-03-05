@@ -11,7 +11,7 @@ import sys
 import concurrent.futures
 from enum import Enum
 from numpy.typing import NDArray
-from scipy.sparse.linalg import eigs as _scipy_eigs
+from scipy.sparse.linalg import eigsh
 from typing import Tuple, List, Dict, Any, Union, Optional
 
 from grapp.linalg.ops_scipy import (
@@ -139,7 +139,7 @@ def eigs(
             operator = _SciPyStdXTXOperator(grg, freqs, haploid=haploid, **op_kwargs)
         else:
             operator = _SciPyXTXOperator(grg, freqs, haploid=haploid, **op_kwargs)
-    eigen_values, eigen_vectors = _scipy_eigs(operator, k=k, which="LR")
+    eigen_values, eigen_vectors = eigsh(operator, k=k, which="LM")
     sort_by_eigvalues(eigen_values, eigen_vectors)
     return eigen_values, eigen_vectors
 
@@ -183,7 +183,7 @@ def get_eig_pcs(
     if verbose:
         print(f"Running eigen decomposition on {op.shape[0]} variants")
 
-    eigen_values, eigen_vectors = _scipy_eigs(op, k=k, which="LR")
+    eigen_values, eigen_vectors = eigsh(op, k=k, which="LM")
     sort_by_eigvalues(eigen_values, eigen_vectors)
 
     # Standardize all k eigenvectors at once: for later
