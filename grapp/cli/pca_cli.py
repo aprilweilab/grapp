@@ -23,11 +23,6 @@ def add_options(subparser):
         help='Output filename to write the PCs to. Default: "<grg_input>.pcs.tsv"',
     )
     subparser.add_argument(
-        "--no-normalize",
-        action="store_true",
-        help="Don't normalize the PCs according to sqrt(eigenvalue) for each.",
-    )
-    subparser.add_argument(
         "--pro-pca",
         action="store_true",
         help="Use the ProPCA algorithm to compute principle components.",
@@ -55,7 +50,6 @@ def run(args):
     scores = PCs(
         grg_list,
         k=args.dimensions,
-        unitvar=not args.no_normalize,
         use_pro_pca=args.pro_pca,
         sample_window=args.sample_window,
         threads=args.jobs,
