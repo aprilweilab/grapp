@@ -52,7 +52,7 @@ the operators compatible with [scipy.sparse.linalg.LinearOperator](https://docs.
 
 #### Command Line
 
-The Principle Component Analysis (PCA) is available via the command line:
+The Principal Component Analysis (PCA) is available via the command line:
 ```
 usage: grapp pca [-h] [-d DIMENSIONS] [-o PCS_OUT] [--normalize] [--pro-pca] grg_input
 
@@ -66,7 +66,7 @@ options:
   -o PCS_OUT, --pcs-out PCS_OUT
                         Output filename to write the PCs to. Default: "<grg_input>.pcs.tsv"
   --normalize           Normalize the PCs according to sqrt(eigenvalue) for each.
-  --pro-pca             Use the ProPCA algorithm to compute principle components.
+  --pro-pca             Use the ProPCA algorithm to compute principal components.
 ```
 
 #### Library
