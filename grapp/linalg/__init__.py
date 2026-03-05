@@ -157,7 +157,7 @@ def get_eig_pcs(
     verbose: bool = True,
 ) -> Tuple[NDArray, NDArray]:
     """
-    Get the principle components for each sample corresponding to the first :math:`k` eigenvectors from a GRG,
+    Get the principal components for each sample corresponding to the first :math:`k` eigenvectors from a GRG,
     using an iterative eigenvector decomposition method.
 
     :param grgs: The GRG or list of GRGs to perform PCA on.
@@ -203,7 +203,7 @@ def PCs(
     threads: int = 1,
 ):
     """
-    Get the principle components for each sample corresponding to the first :math:`k` eigenvectors from a GRG.
+    Get the principal components for each sample corresponding to the first :math:`k` eigenvectors from a GRG.
 
     :param grgs: The GRG or list of GRGs to perform PCA on.
     :type grgs: Union[pygrgl.GRG, List[pygrgl.GRG]]
@@ -220,7 +220,7 @@ def PCs(
     :param threads: Number of threads to use. Will never use more than the number of input GRGs.
         Default: 1.
     :type threads: int
-    :return: A pandas.DataFrame with a row per individual and a column per principle component. Or, if include_eig
+    :return: A pandas.DataFrame with a row per individual and a column per principal component. Or, if include_eig
         then a triple (dataframe, eigen values, eigen vectors), where eigen vectors are None unless use_pro_pca
         was True.
     :rtype: Union[pandas.DataFrame, Tuple[pandas.DataFrame, numpy.array, Optional[numpy.array]]]

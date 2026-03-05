@@ -25,7 +25,7 @@ def add_options(subparser):
     subparser.add_argument(
         "--pro-pca",
         action="store_true",
-        help="Use the ProPCA algorithm to compute principle components.",
+        help="Use the ProPCA algorithm to compute principal components.",
     )
     subparser.add_argument(
         "--sample-window",
