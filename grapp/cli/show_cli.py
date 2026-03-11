@@ -8,7 +8,7 @@ from grapp.util.simple import (
     allele_counts,
     allele_frequencies,
 )
-from grapp.util.hwe import hwe
+from grapp.util.simple import hwe
 
 
 def add_options(subparser: argparse.ArgumentParser):

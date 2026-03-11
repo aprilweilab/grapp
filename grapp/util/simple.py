@@ -225,7 +225,7 @@ def hwe(
         init="xtx",
     )
     del inmat
-    hom_A = zyg_info[0] / 2
+    hom_A = zyg_info[0] // 2
     het_A = zyg_info[1] - (zyg_info[0] * 2)
     del zyg_info
     n_A = het_A + 2 * hom_A
@@ -248,7 +248,7 @@ def hwe(
             )
     else:
         arglist = [
-            (het_A[mut_id], hom_A[mut_id], other[mut_id])
+            (het_A[mut_id], hom_A[mut_id], other[mut_id], mut_id)
             for mut_id in range(grg.num_mutations)
         ]
         with Pool(jobs) as pool:
