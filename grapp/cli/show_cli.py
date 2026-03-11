@@ -8,10 +8,18 @@ from grapp.util.simple import (
     allele_counts,
     allele_frequencies,
 )
+from grapp.util.hwe import hwe
 
 
 def add_options(subparser: argparse.ArgumentParser):
     subparser.add_argument("grg_input", help="The input GRG file")
+    subparser.add_argument(
+        "-j",
+        "--jobs",
+        default=1,
+        type=int,
+        help="Number of parallel jobs (threads) to use. Default: 1",
+    )
     whattoshow = subparser.add_mutually_exclusive_group()
     whattoshow.add_argument(
         "-S",
@@ -42,6 +50,12 @@ def add_options(subparser: argparse.ArgumentParser):
         "--counts",
         action="store_true",
         help="Show the tab-separated allele counts information.",
+    )
+    whattoshow.add_argument(
+        "-H",
+        "--HWE",
+        action="store_true",
+        help="Show the tab-separated hardy-weinberg p-value information.",
     )
 
 
@@ -91,4 +105,7 @@ def run(args):
                 "Total": grg.num_samples,
             }
         )
+        df.to_csv(sys.stdout, sep="\t", index=False)
+    if args.HWE:
+        df = hwe(grg, jobs=args.jobs, show_progress=True)
         df.to_csv(sys.stdout, sep="\t", index=False)

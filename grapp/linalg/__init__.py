@@ -186,7 +186,7 @@ def get_eig_pcs(
         freqs = _allele_frequencies(grgs, adjust_missing=True)
         op = SciPyStdXXTOperator(grgs, freqs, haploid=False, **op_kwargs)
     if verbose:
-        print(f"Running eigen decomposition on {op.shape[0]} variants")
+        print(f"Running eigen decomposition on {op.shape[0]} individuals")
 
     eigen_values, eigen_vectors = eigsh(op, k=k, which="LM")
     sort_by_eigvalues(eigen_values, eigen_vectors)
