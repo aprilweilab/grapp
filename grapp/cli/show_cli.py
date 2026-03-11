@@ -8,7 +8,7 @@ from grapp.util.simple import (
     allele_counts,
     allele_frequencies,
 )
-from grapp.util.simple import hwe
+from grapp.util.simple import hwe_df
 
 
 def add_options(subparser: argparse.ArgumentParser):
@@ -107,5 +107,5 @@ def run(args):
         )
         df.to_csv(sys.stdout, sep="\t", index=False)
     if args.HWE:
-        df = hwe(grg, jobs=args.jobs, show_progress=True)
+        df = hwe_df(grg, jobs=args.jobs, show_progress=True)
         df.to_csv(sys.stdout, sep="\t", index=False)

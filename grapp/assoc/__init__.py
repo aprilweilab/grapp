@@ -1,5 +1,5 @@
 from grapp.linalg.ops_scipy import SciPyStdXOperator, SciPyXOperator
-from grapp.util.simple import allele_counts, _GenotypeDist
+from grapp.util.simple import allele_counts, _GenotypeDist, common_mut_dataframe
 from scipy.stats import t as t_distribution
 from typing import List, Optional, Union
 import itertools
@@ -248,29 +248,9 @@ def linear_assoc_no_covar(
     cdf_vals = t_distribution.cdf(t_stat, df=n - 2)
     p_val = 2 * numpy.where(t_stat > 0, 1 - cdf_vals, cdf_vals)
 
-    positions = list(
-        map(lambda i: grg.get_mutation_by_id(i).position, range(grg.num_mutations))
+    return common_mut_dataframe(
+        grg, COUNT=acount, BETA=beta, B0=b0, SE=se, R2=r2, T=t_stat, P=p_val
     )
-    alts = list(
-        map(lambda i: grg.get_mutation_by_id(i).allele, range(grg.num_mutations))
-    )
-
-    # Build DataFrame
-    df = pandas.DataFrame(
-        {
-            "POS": positions,
-            "ALT": alts,
-            "COUNT": acount,
-            "BETA": beta,
-            "B0": b0,
-            "SE": se,
-            "R2": r2,
-            "T": t_stat,
-            "P": p_val,
-        }
-    )
-
-    return df
 
 
 def linear_assoc_covar(
@@ -424,17 +404,7 @@ def linear_assoc_covar(
         for j in range(Q.shape[1]):
             gamma_cols[f"GAMMA_{j}"] = gammas[:, j]
 
-    positions = list(
-        map(lambda i: grg.get_mutation_by_id(i).position, range(grg.num_mutations))
-    )
-    alts = list(
-        map(lambda i: grg.get_mutation_by_id(i).allele, range(grg.num_mutations))
-    )
-
-    # Build output DataFrame
     df_data = {
-        "POS": positions,
-        "ALT": alts,
         "COUNT": acount,
         "BETA": beta,
         "SE": se,
@@ -442,4 +412,4 @@ def linear_assoc_covar(
         "P": p,
     }
     df_data.update(gamma_cols)
-    return pandas.DataFrame(df_data)
+    return common_mut_dataframe(grg, **df_data)

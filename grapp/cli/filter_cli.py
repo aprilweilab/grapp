@@ -1,4 +1,3 @@
-from enum import Enum
 from grapp.util.filter import (
     grg_save_individuals,
     grg_save_mut_filter,
@@ -9,21 +8,13 @@ from grapp.util.simple import (
     UserInputError,
     allele_counts,
     allele_frequencies,
+    VariantType,
+    get_variant_type,
 )
 from typing import Set
 import argparse
 import os
 import pygrgl
-
-
-class VariantType(Enum):
-    SNPS = "snps"  # Length=1
-    INDELS = "indels"  # Length <50
-    MNPS = "mnps"  # Length of ALT same as length of REF
-    OTHER = "other"  # Anything else
-
-    def __str__(self):
-        return self.value
 
 
 def variant_type_set(arg_value: str) -> Set[VariantType]:
@@ -219,17 +210,7 @@ def run(args):
             if args.max_af is not None and freqs[mut_id] > args.max_af:
                 return False
             if args.types is not None:
-                ref_len = len(mut.ref_allele)
-                alt_len = len(mut.allele)
-                if ref_len == alt_len:
-                    if ref_len == 1:
-                        my_type = VariantType.SNPS
-                    else:
-                        my_type = VariantType.MNPS
-                elif ref_len < 50 and alt_len < 50:
-                    my_type = VariantType.INDELS
-                else:
-                    my_type = VariantType.OTHER
+                my_type = get_variant_type(mut)
                 return my_type in args.types
             return True
 
