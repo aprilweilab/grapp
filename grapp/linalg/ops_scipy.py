@@ -1050,3 +1050,74 @@ class MultiSciPyStdXTXOperator(LinearOperator):
         if vect.ndim != 2:
             vect = numpy.array([vect]).T
         return self._matvec(vect)
+
+
+class MultiSciPyStdXXTOperator(LinearOperator):
+    """
+    A scipy.sparse.linalg.LinearOperator on multiple GRGs. Same as SciPyStdXXTOperator, except if the input
+    GRGs have mutation counts M1, M2, ..., MK, then the dimension of the implicit underlying genotype
+    matrix is Nx(M1 + M2 + ... + MK).
+
+    :param grgs: The GRGs the operator will multiply against. They must all have the same samples,
+        and the mutations are expected to differ (e.g., one GRG per chromosome of the same dataset).
+    :type grgs: List[pygrgl.GRG]
+    :param dtype: The numpy.dtype to use.
+    :type dtype: TypeAlias
+    :param haploid: Perform calculations on the {0, 1} haploid genotype matrix, instead of the {0, ..., grg.ploidy}
+        genotype matrix. Default: False.
+    :type haploid: bool
+    :param mutation_filter: Changes the dimensions of :math:`X` to be NxP (where P is the length of
+        mutation_filter) instead of NxM. Here the mutation filter follows the same numbering as the
+        input/output matrices: for example, if grgs=[grg1, grg2] then indexes 0...(grg1.num_mutations-1)
+        will be for grg1, and grg1.num_mutations...(grg1.num_mutations+grg2.num_mutations-1) will be the
+        mutations for grg2. Then if you have a mutation_filter containing the number ``grg1.num_mutations + 4``
+        it means it will keep grg2's mutation with ID ``4``. Default: no filter.
+    :type mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]]
+    :param sample_filter: Changes the dimensions of :math:`X` to be QxM (where Q is the length of
+        sample_filter) instead of NxM. Since all GRGs have the same samples, this behavior is the
+        same as the non-Multi operators. Default: no filter.
+    :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
+    :param threads: Number of threads for performing the multiplication. Each GRG can be done in
+        parallel.
+    :type threads: int
+    """
+
+    def __init__(
+        self,
+        grgs: List[pygrgl.GRG],
+        freqs: List[numpy.typing.NDArray],
+        dtype: TypeAlias = numpy.float64,
+        haploid: bool = False,
+        mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
+        sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
+        threads: int = 1,
+    ):
+        self.std_x_op = MultiSciPyStdXOperator(
+            grgs,
+            pygrgl.TraversalDirection.UP,
+            freqs,
+            haploid=haploid,
+            dtype=dtype,
+            mutation_filter=mutation_filter,
+            sample_filter=sample_filter,
+            threads=threads,
+        )
+        xxt_shape = (self.std_x_op.shape[0], self.std_x_op.shape[0])
+        super().__init__(dtype=dtype, shape=xxt_shape)
+
+    def _matmat(self, other_matrix):
+        D = self.std_x_op._rmatmat(other_matrix)
+        return self.std_x_op._matmat(D)
+
+    def _rmatmat(self, other_matrix):
+        return self._matmat(other_matrix)
+
+    def _matvec(self, vect):
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T
+        return self._matmat(vect)
+
+    def _rmatvec(self, vect):
+        if vect.ndim != 2:
+            vect = numpy.array([vect]).T
+        return self._matvec(vect)

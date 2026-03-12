@@ -14,16 +14,21 @@ from numpy.typing import NDArray
 from scipy.sparse.linalg import eigsh
 from typing import Tuple, List, Dict, Any, Union, Optional
 
-from grapp.linalg.ops_scipy import (
-    SciPyXOperator as _SciPyXOperator,
-    SciPyXTXOperator as _SciPyXTXOperator,
-    SciPyStdXOperator as _SciPyStdXOperator,
-    MultiSciPyStdXOperator as _MultiSciPyStdXOperator,
-    SciPyStdXTXOperator as _SciPyStdXTXOperator,
-    MultiSciPyStdXTXOperator as _MultiSciPyStdXTXOperator,
+from grapp.util import allele_frequencies as _allele_frequencies
+
+# Everything below is imported so that users can import them via grapp.linalg
+from grapp.linalg.ops_scipy import (  # noqa: F401
+    SciPyXOperator,
+    SciPyXTXOperator,
+    SciPyXXTOperator,
+    SciPyStdXOperator,
+    SciPyStdXTXOperator,
+    SciPyStdXXTOperator,
+    MultiSciPyStdXOperator,
+    MultiSciPyStdXTXOperator,
+    MultiSciPyStdXXTOperator,
 )
 from grapp.linalg.proPCA import get_pcs_propca
-from grapp.util import allele_frequencies
 
 
 class MatrixSelection(Enum):
@@ -98,11 +103,11 @@ def eigs(
     :return: (eigen_value, eigen_vectors) as defined by scipy.sparse.linalg.eigs
     """
     k = min(k, grg.num_mutations)
-    freqs = allele_frequencies(grg)
+    freqs = _allele_frequencies(grg)
 
     if matrix == MatrixSelection.X:
         if standardized:
-            operator = _SciPyStdXOperator(
+            operator = SciPyStdXOperator(
                 grg,
                 pygrgl.TraversalDirection.UP,
                 freqs,
@@ -110,7 +115,7 @@ def eigs(
                 **op_kwargs,
             )
         else:
-            operator = _SciPyXOperator(
+            operator = SciPyXOperator(
                 grg,
                 pygrgl.TraversalDirection.UP,
                 freqs,
@@ -119,7 +124,7 @@ def eigs(
             )
     elif matrix == MatrixSelection.XT:
         if standardized:
-            operator = _SciPyStdXOperator(
+            operator = SciPyStdXOperator(
                 grg,
                 pygrgl.TraversalDirection.DOWN,
                 freqs,
@@ -127,7 +132,7 @@ def eigs(
                 **op_kwargs,
             )
         else:
-            operator = _SciPyXOperator(
+            operator = SciPyXOperator(
                 grg,
                 pygrgl.TraversalDirection.DOWN,
                 freqs,
@@ -136,9 +141,9 @@ def eigs(
             )
     elif matrix == MatrixSelection.XTX:
         if standardized:
-            operator = _SciPyStdXTXOperator(grg, freqs, haploid=haploid, **op_kwargs)
+            operator = SciPyStdXTXOperator(grg, freqs, haploid=haploid, **op_kwargs)
         else:
-            operator = _SciPyXTXOperator(grg, freqs, haploid=haploid, **op_kwargs)
+            operator = SciPyXTXOperator(grg, freqs, haploid=haploid, **op_kwargs)
     eigen_values, eigen_vectors = eigsh(operator, k=k, which="LM")
     sort_by_eigvalues(eigen_values, eigen_vectors)
     return eigen_values, eigen_vectors
@@ -150,9 +155,9 @@ def get_eig_pcs(
     op_kwargs: Dict[str, Any] = {},
     threads: int = 1,
     verbose: bool = True,
-) -> Tuple[NDArray, NDArray, NDArray]:
+) -> Tuple[NDArray, NDArray]:
     """
-    Get the principle components for each sample corresponding to the first :math:`k` eigenvectors from a GRG,
+    Get the principal components for each sample corresponding to the first :math:`k` eigenvectors from a GRG,
     using an iterative eigenvector decomposition method.
 
     :param grgs: The GRG or list of GRGs to perform PCA on.
@@ -166,70 +171,47 @@ def get_eig_pcs(
     :type threads: int
     :param verbose: Emit information on stderr.
     :type verboose: bool
-    :return: A triple (PC_scores, eigen_values, eigen_vectors) where each is a numpy array.
-    :rtype: numpy.ndarray
+    :return: A pair (PC_scores, eigen_values) where each is a numpy array.
+    :rtype: Tuple[numpy.ndarray, numpy.ndarray]
     """
     freqs: Union[List[numpy.typing.NDArray], numpy.typing.NDArray]
     if isinstance(grgs, list):
         executor = concurrent.futures.ThreadPoolExecutor(threads)
-        futures = [executor.submit(allele_frequencies, grg) for grg in grgs]
+        futures = [executor.submit(_allele_frequencies, grg) for grg in grgs]
         freqs = [f.result() for f in futures]
-        op = _MultiSciPyStdXTXOperator(
+        op = MultiSciPyStdXXTOperator(
             grgs, freqs, haploid=False, threads=threads, **op_kwargs
         )
     else:
-        freqs = allele_frequencies(grgs, adjust_missing=True)
-        op = _SciPyStdXTXOperator(grgs, freqs, haploid=False, **op_kwargs)
+        freqs = _allele_frequencies(grgs, adjust_missing=True)
+        op = SciPyStdXXTOperator(grgs, freqs, haploid=False, **op_kwargs)
     if verbose:
         print(f"Running eigen decomposition on {op.shape[0]} variants")
 
     eigen_values, eigen_vectors = eigsh(op, k=k, which="LM")
     sort_by_eigvalues(eigen_values, eigen_vectors)
-
-    # Standardize all k eigenvectors at once: for later
     assert eigen_vectors.real.dtype == numpy.float64
-    if isinstance(grgs, list):
-        PC_scores = _MultiSciPyStdXOperator(
-            grgs,
-            pygrgl.TraversalDirection.UP,
-            freqs,  # type: ignore
-            haploid=False,
-            threads=threads,
-            **op_kwargs,
-        )._matmat(eigen_vectors.real)
-    else:
-        PC_scores = _SciPyStdXOperator(
-            grgs,
-            pygrgl.TraversalDirection.UP,
-            freqs,  # type: ignore
-            haploid=False,
-            **op_kwargs,
-        )._matmat(eigen_vectors.real)
-    return PC_scores, eigen_values, eigen_vectors
+    return eigen_vectors, eigen_values
 
 
 def PCs(
     grgs: Union[pygrgl.GRG, List[pygrgl.GRG]],
     k: int,
-    unitvar: bool = True,
     include_eig: bool = False,
     use_pro_pca: bool = False,
     sample_window: int = 1,
     threads: int = 1,
 ):
     """
-    Get the principle components for each sample corresponding to the first :math:`k` eigenvectors from a GRG.
+    Get the principal components for each sample corresponding to the first :math:`k` eigenvectors from a GRG.
 
     :param grgs: The GRG or list of GRGs to perform PCA on.
     :type grgs: Union[pygrgl.GRG, List[pygrgl.GRG]]
     :param k: The number of eigenvectors/values to use. These correspond to the `k` largest
         eigenvalues.
     :type k: int
-    :param unitvar: When True, normalize the PCs by dividing by the square root of each
-        corresponding eigenvalue. Default: True.
-    :type unitvar: bool
     :param include_eig: When True, the return value is a triple of (DataFrame, EigenValues, EigenVectors),
-        where the eigen values and vectors are as returned by scipy.sparse.linalg.eigs(). Default: False.
+        where the eigen values are as returned by scipy.sparse.linalg.eigsh(), and the eigenvalues are only provided when use_pro_pca=True. Default: False.
     :type include_eig: bool
     :param sample_window: If provided, defines a window width in base-pair. Within each window (starting at
         the Mutation with the lowest coordinate) randomly choose a single SNP and use that for performing
@@ -238,8 +220,10 @@ def PCs(
     :param threads: Number of threads to use. Will never use more than the number of input GRGs.
         Default: 1.
     :type threads: int
-    :return: A pandas.DataFrame with a row per individual and a column per principle component.
-    :rtype: pandas.DataFrame
+    :return: A pandas.DataFrame with a row per individual and a column per principal component. Or, if include_eig
+        then a triple (dataframe, eigen values, eigen vectors), where eigen vectors are None unless use_pro_pca
+        was True.
+    :rtype: Union[pandas.DataFrame, Tuple[pandas.DataFrame, numpy.array, Optional[numpy.array]]]
     """
     grg_list = grgs if isinstance(grgs, list) else [grgs]
     grgs = None
@@ -266,12 +250,10 @@ def PCs(
             grg_list, k, threads=threads, op_kwargs={"mutation_filter": mutation_filter}
         )
     else:
-        PC_scores, eigen_values, eigen_vectors = get_eig_pcs(
+        PC_scores, eigen_values = get_eig_pcs(
             grg_list, k, threads=threads, op_kwargs={"mutation_filter": mutation_filter}
         )
-
-    if unitvar:
-        PC_scores = PC_scores / numpy.sqrt(eigen_values.real)[None, :]
+        eigen_vectors = None
 
     colnames = [f"PC{i+1}" for i in range(PC_scores.shape[1])]
     df = pd.DataFrame(PC_scores, columns=colnames, copy=False)
