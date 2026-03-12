@@ -274,6 +274,8 @@ def hwe(
     hom_A = hom_A.tolist()
     het_A = het_A.tolist()
 
+    if show_progress:
+        print(f"Calculating HWE p-values...", file=sys.stderr)
     pvalues = numpy.zeros(grg.num_mutations)
     if jobs == 1:
         progress = (lambda x: x) if not show_progress else tqdm
@@ -301,6 +303,8 @@ def hwe(
                 )
             for result, b in results:
                 pvalues[b] = result
+    if show_progress:
+        print(f"Done.", file=sys.stderr)
     if return_counts:
         return pvalues, n_A
     return pvalues
@@ -336,6 +340,7 @@ def hwe_df(
 def site_alleles(
     grg: pygrgl.GRG,
     alt_only: bool = False,
+    mut_ids: List[int] = [],
 ) -> numpy.typing.NDArray:
     """
     Compute the number of alleles at the site associated with each mutation (variant).
@@ -347,6 +352,8 @@ def site_alleles(
     :type grg: pygrgl.GRG
     :param alt_only: Only count ALT alleles, not REF alleles. Default: False.
     :type alt_only: bool
+    :param mut_ids: Restrict to the MutationIDs given (e.g., for only looks at SNPs, etc.)
+    :type mut_ids: List[int]
     :return: A numpy array of length num_mutations, containing a allele count for each mutation.
     :rtype: numpy.array
     """
@@ -354,7 +361,8 @@ def site_alleles(
     allele_set = set()
     prev_pos = -1
     to_add = 0
-    for mut_id in range(grg.num_mutations):
+    mut_id_list = range(grg.num_mutations) if not mut_ids else mut_ids
+    for mut_id in mut_id_list:
         mut = grg.get_mutation_by_id(mut_id)
         if prev_pos == mut.position:
             allele_set.add(mut.allele)
@@ -372,10 +380,7 @@ def site_alleles(
     if allele_set:
         result.extend([len(allele_set)] * to_add)
     res_array = numpy.array(result, dtype=numpy.int32)
-    assert res_array.shape[0] == grg.num_mutations, (
-        res_array.shape[0],
-        grg.num_mutations,
-    )
+    assert res_array.shape[0] == len(mut_id_list)
     return res_array
 
 
