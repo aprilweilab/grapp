@@ -330,6 +330,22 @@ class SciPyXXTOperator(LinearOperator):
 # (Abstract) base class for GRG-based scipy LinearOperators that standardize the underlying
 # genotype matrix.
 class _SciPyStandardizedOperator(LinearOperator):
+    """
+    Private base class for standardizing the genotype matrix.
+
+    :param grg: The GRG
+    :param freqs: The allele frequencies, used to determine the mean and variance.
+    :param shape: The shape of the operator.
+    :param dtype: The datatype to use for the result.
+    :param haploid: When true, treat the matrix as haplotypes, not individuals of ploid P.
+    :param alpha: Alpha model coefficient (e.g., Speed, et. al., 2012) for variance, which multiplicatively
+        scales the genotype matrix by sqrt(variance^alpha). By default alpha=-1, which
+        corresponds to the "standard" binomial variance scaling.
+    :param custom_variance: Instead of using binomial variance, use provided custom variance
+        for mutations. Must be an array of length num_mutations, for example the result from
+        grapp.util.variance(). Default: None.
+    """
+
     def __init__(
         self,
         grg: pygrgl.GRG,
@@ -337,24 +353,32 @@ class _SciPyStandardizedOperator(LinearOperator):
         shape: Tuple[int, int],
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
+        alpha: float = -1,
+        custom_variance: Optional[numpy.typing.NDArray] = None,
     ):
         self.haploid = haploid
         self.grg = grg
         self.freqs = freqs
         self.mult_const = 1 if self.haploid else grg.ploidy
 
-        # TODO: we also want to support sample-based variance calculation, using init=xtx
-        raw = self.mult_const * self.freqs * (1.0 - self.freqs)
+        if custom_variance is not None:
+            assert (
+                custom_variance.shape == self.freqs.shape
+            ), "custom_variance must have same dimension as freqs (1xM)"
+            variance = custom_variance
+        else:
+            variance = self.mult_const * self.freqs * (1.0 - self.freqs)
 
-        # Two versions of sigma, the second flips 0 values (which means the frequency was
-        # either 1 or 0 for the mutation) to 1 values so we can use it for division.
+        # Multiplicative scaling factor is sqrt(variance^alpha), we maintain 0 values
+        # (which means the frequency was either 1 or 0 for the mutation) to avoid NaNs
         with numpy.errstate(invalid="raise"):
-            original_sigma = numpy.sqrt(raw)
-        self.sigma_corrected = numpy.where(
-            original_sigma == 0,
-            1,
-            original_sigma,
-        )
+            self.inverse_sigma = numpy.zeros(variance.shape)
+            numpy.sqrt(
+                numpy.power(
+                    variance, alpha, out=self.inverse_sigma, where=variance != 0
+                ),
+                out=self.inverse_sigma,
+            )
         super().__init__(dtype=dtype, shape=shape)
 
 
@@ -387,6 +411,14 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
     :param sample_filter: Changes the dimensions of :math:`X` to be QxM (where Q is the length of
         sample_filter) instead of NxM. Default: no filter.
     :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
+    :param alpha: Alpha model coefficient (e.g., Speed, et. al., 2012) for variance, which multiplicatively
+        scales the genotype matrix by sqrt(variance^alpha). By default alpha=-1, which
+        corresponds to the "standard" binomial variance scaling.
+    :type alpha: float
+    :param custom_variance: Instead of using binomial variance, use provided custom variance
+        for mutations. Must be an array of length num_mutations, for example the result from
+        grapp.util.variance(). Default: None.
+    :type custom_variance: numpy.ndarray
     """
 
     def __init__(
@@ -398,13 +430,23 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
         haploid: bool = False,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
+        alpha: float = -1,
+        custom_variance: Optional[numpy.typing.NDArray] = None,
     ):
         self.filter = GRGOpFilter(grg, haploid, mutation_filter, sample_filter)
         self.direction = direction
         shape = self.filter.shape
         if self.direction == _DOWN:
             shape = _transpose_shape(shape)
-        super().__init__(grg, freqs, shape, dtype=dtype, haploid=haploid)
+        super().__init__(
+            grg,
+            freqs,
+            shape,
+            dtype=dtype,
+            haploid=haploid,
+            alpha=alpha,
+            custom_variance=custom_variance,
+        )
 
     def _matmat_direction(self, other_matrix, direction):
         mult_dir = _flip_dir(direction)
@@ -412,7 +454,7 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
             if direction == _UP:
                 vS = (
                     self.filter.prep_input(other_matrix.T, mult_dir)
-                    / self.sigma_corrected
+                    * self.inverse_sigma
                 )
                 XvS = pygrgl.matmul(
                     self.grg,
@@ -434,11 +476,11 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
                         mult_dir,
                         by_individual=not self.haploid,
                     )
-                    / self.sigma_corrected
+                    * self.inverse_sigma
                 )
                 col_const = numpy.sum(m.T, axis=0, keepdims=True).T
                 sub_const2 = (
-                    self.mult_const * self.freqs / self.sigma_corrected
+                    self.mult_const * self.freqs * self.inverse_sigma
                 ) * col_const
                 return self.filter.adjust_output(SXv - sub_const2, mult_dir).T
 
@@ -491,6 +533,14 @@ class SciPyStdXTXOperator(LinearOperator):
     :param sample_filter: Changes the dimensions of :math:`X` to be QxM (where Q is the length of
         sample_filter) instead of NxM. Default: no filter.
     :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
+    :param alpha: Alpha model coefficient (e.g., Speed, et. al., 2012) for variance, which multiplicatively
+        scales the genotype matrix by sqrt(variance^alpha). By default alpha=-1, which
+        corresponds to the "standard" binomial variance scaling.
+    :type alpha: float
+    :param custom_variance: Instead of using binomial variance, use provided custom variance
+        for mutations. Must be an array of length num_mutations, for example the result from
+        grapp.util.variance(). Default: None.
+    :type custom_variance: numpy.ndarray
     """
 
     def __init__(
@@ -501,6 +551,8 @@ class SciPyStdXTXOperator(LinearOperator):
         haploid: bool = False,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
+        alpha: float = -1,
+        custom_variance: Optional[numpy.typing.NDArray] = None,
     ):
         self.filter = GRGOpFilter(grg, haploid, mutation_filter, sample_filter)
         self.std_x_op = SciPyStdXOperator(
@@ -511,6 +563,8 @@ class SciPyStdXTXOperator(LinearOperator):
             dtype=dtype,
             mutation_filter=mutation_filter,
             sample_filter=sample_filter,
+            alpha=alpha,
+            custom_variance=custom_variance,
         )
         xtx_shape = (self.std_x_op.shape[1], self.std_x_op.shape[1])
         super().__init__(dtype=dtype, shape=xtx_shape)
@@ -561,6 +615,14 @@ class SciPyStdXXTOperator(LinearOperator):
     :param sample_filter: Changes the dimensions of :math:`X` to be QxM (where Q is the length of
         sample_filter) instead of NxM. Default: no filter.
     :type sample_filter: Optional[Union[List[int], numpy.typing.NDArray]]
+    :param alpha: Alpha model coefficient (e.g., Speed, et. al., 2012) for variance, which multiplicatively
+        scales the genotype matrix by sqrt(variance^alpha). By default alpha=-1, which
+        corresponds to the "standard" binomial variance scaling.
+    :type alpha: float
+    :param custom_variance: Instead of using binomial variance, use provided custom variance
+        for mutations. Must be an array of length num_mutations, for example the result from
+        grapp.util.variance(). Default: None.
+    :type custom_variance: numpy.ndarray
     """
 
     def __init__(
@@ -571,6 +633,8 @@ class SciPyStdXXTOperator(LinearOperator):
         haploid: bool = False,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
+        alpha: float = -1,
+        custom_variance: Optional[numpy.typing.NDArray] = None,
     ):
         self.std_x_op = SciPyStdXOperator(
             grg,
@@ -580,6 +644,8 @@ class SciPyStdXXTOperator(LinearOperator):
             dtype=dtype,
             mutation_filter=mutation_filter,
             sample_filter=sample_filter,
+            alpha=alpha,
+            custom_variance=custom_variance,
         )
         xxt_shape = (self.std_x_op.shape[0], self.std_x_op.shape[0])
         super().__init__(dtype=dtype, shape=xxt_shape)
@@ -870,6 +936,14 @@ class MultiSciPyStdXOperator(LinearOperator):
     :param threads: Number of threads for performing the multiplication. Each GRG can be done in
         parallel.
     :type threads: int
+    :param alpha: Alpha model coefficient (e.g., Speed, et. al., 2012) for variance, which multiplicatively
+        scales the genotype matrix by sqrt(variance^alpha). By default alpha=-1, which
+        corresponds to the "standard" binomial variance scaling.
+    :type alpha: float
+    :param custom_variance: Instead of using binomial variance, use provided custom variance
+        for mutations. Must be an array of length num_mutations, for example the result from
+        grapp.util.variance(). Default: None.
+    :type custom_variance: numpy.ndarray
     """
 
     def __init__(
@@ -882,6 +956,8 @@ class MultiSciPyStdXOperator(LinearOperator):
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
+        alpha: float = -1,
+        custom_variance: Optional[numpy.typing.NDArray] = None,
     ):
         assert len(grgs) >= 1, "Must provide at least one GRG"
         assert len(grgs) == len(freqs), "Must provide allele frequencies for every GRG"
@@ -922,6 +998,8 @@ class MultiSciPyStdXOperator(LinearOperator):
                         haploid=haploid,
                         mutation_filter=grg_mut_filt,
                         sample_filter=sample_filter,
+                        alpha=alpha,
+                        custom_variance=custom_variance,
                     )
                 )
             prev_max_mut += g.num_mutations
@@ -1009,6 +1087,14 @@ class MultiSciPyStdXTXOperator(LinearOperator):
     :param threads: Number of threads for performing the multiplication. Each GRG can be done in
         parallel.
     :type threads: int
+    :param alpha: Alpha model coefficient (e.g., Speed, et. al., 2012) for variance, which multiplicatively
+        scales the genotype matrix by sqrt(variance^alpha). By default alpha=-1, which
+        corresponds to the "standard" binomial variance scaling.
+    :type alpha: float
+    :param custom_variance: Instead of using binomial variance, use provided custom variance
+        for mutations. Must be an array of length num_mutations, for example the result from
+        grapp.util.variance(). Default: None.
+    :type custom_variance: numpy.ndarray
     """
 
     def __init__(
@@ -1020,6 +1106,8 @@ class MultiSciPyStdXTXOperator(LinearOperator):
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
+        alpha: float = -1,
+        custom_variance: Optional[numpy.typing.NDArray] = None,
     ):
         self.std_x_op = MultiSciPyStdXOperator(
             grgs,
@@ -1030,6 +1118,8 @@ class MultiSciPyStdXTXOperator(LinearOperator):
             mutation_filter=mutation_filter,
             sample_filter=sample_filter,
             threads=threads,
+            alpha=alpha,
+            custom_variance=custom_variance,
         )
         xtx_shape = (self.std_x_op.shape[1], self.std_x_op.shape[1])
         super().__init__(dtype=dtype, shape=xtx_shape)
@@ -1080,6 +1170,14 @@ class MultiSciPyStdXXTOperator(LinearOperator):
     :param threads: Number of threads for performing the multiplication. Each GRG can be done in
         parallel.
     :type threads: int
+    :param alpha: Alpha model coefficient (e.g., Speed, et. al., 2012) for variance, which multiplicatively
+        scales the genotype matrix by sqrt(variance^alpha). By default alpha=-1, which
+        corresponds to the "standard" binomial variance scaling.
+    :type alpha: float
+    :param custom_variance: Instead of using binomial variance, use provided custom variance
+        for mutations. Must be an array of length num_mutations, for example the result from
+        grapp.util.variance(). Default: None.
+    :type custom_variance: numpy.ndarray
     """
 
     def __init__(
@@ -1091,6 +1189,8 @@ class MultiSciPyStdXXTOperator(LinearOperator):
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
+        alpha: float = -1,
+        custom_variance: Optional[numpy.typing.NDArray] = None,
     ):
         self.std_x_op = MultiSciPyStdXOperator(
             grgs,
@@ -1101,6 +1201,8 @@ class MultiSciPyStdXXTOperator(LinearOperator):
             mutation_filter=mutation_filter,
             sample_filter=sample_filter,
             threads=threads,
+            alpha=alpha,
+            custom_variance=custom_variance,
         )
         xxt_shape = (self.std_x_op.shape[0], self.std_x_op.shape[0])
         super().__init__(dtype=dtype, shape=xxt_shape)

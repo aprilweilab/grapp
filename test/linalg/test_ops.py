@@ -122,6 +122,13 @@ class TestLinearOperators(unittest.TestCase):
         self.assertFalse(numpy.any(numpy.isnan(numpy_result)))
         numpy.testing.assert_allclose(grg_result, numpy_result, atol=ABSOLUTE_TOLERANCE)
 
+        # Use non-default alpha value for variance, and verify it differs from default
+        grg_alpha2_op = SciPyStdXOperator(
+            self.grg, pygrgl.TraversalDirection.DOWN, freqs, alpha=-2
+        )
+        alpha2_result = grg_alpha2_op._matmat(random_input)
+        self.assertFalse(numpy.allclose(grg_result, alpha2_result))
+
     def test_standardized_op_XtX(self):
         K = 20  # Number of random vectors for test.
         random_input = numpy.random.standard_normal((K, self.grg.num_mutations)).T
@@ -151,6 +158,11 @@ class TestLinearOperators(unittest.TestCase):
         self.assertFalse(numpy.any(numpy.isnan(grg_result)))
         self.assertFalse(numpy.any(numpy.isnan(numpy_result)))
         numpy.testing.assert_allclose(grg_result, numpy_result, atol=ABSOLUTE_TOLERANCE)
+
+        # Use non-default alpha value for variance, and verify it differs from default
+        grg_alpha2_op = SciPyStdXTXOperator(self.grg, freqs, alpha=-2)
+        alpha2_result = grg_alpha2_op._rmatmat(random_input)
+        self.assertFalse(numpy.allclose(grg_result, alpha2_result))
 
     def test_multi_ops(self):
         """
