@@ -3,13 +3,27 @@ Simple utility functions.
 """
 
 from enum import Enum
-from typing import Union, Tuple, List, Optional
+from multiprocessing import Pool
+from typing import Union, Tuple, List, Optional, Set
+from tqdm import tqdm
+import pandas
 import pygrgl
 import numpy
+import sys
 
 
 class UserInputError(Exception):
     pass
+
+
+class VariantType(Enum):
+    SNPS = "snps"  # Length=1
+    INDELS = "indels"  # Length <50
+    MNPS = "mnps"  # Length of ALT same as length of REF
+    OTHER = "other"  # Anything else
+
+    def __str__(self):
+        return self.value
 
 
 # This enum is just a container for string constants used below.
@@ -32,6 +46,28 @@ def _div_or_default(a, b, d):
     """
     result = numpy.full(a.shape, d)
     return numpy.divide(a, b, out=result, where=(b != 0))
+
+
+def common_mut_dataframe(grg, **kwargs):
+    """
+    Generate the "common" output format for mutation-based dataframes, which has "POS", "ALT",
+    and "REF" in the first three columns, and then whatever extra columns the user provides.
+
+    :param kwargs: Keyword arguments are just passed through to pandas.DataFrame({}).
+    :return: The dataframe, with copy=False.
+    :rtype: pandas.DataFrame
+    """
+    positions = []
+    alts = []
+    refs = []
+    for mut_id in range(grg.num_mutations):
+        mut = grg.get_mutation_by_id(mut_id)
+        positions.append(mut.position)
+        alts.append(mut.allele)
+        refs.append(mut.ref_allele)
+    dict_df = {"POS": positions, "ALT": alts, "REF": refs}
+    dict_df.update(kwargs)
+    return pandas.DataFrame(dict_df, copy=False)
 
 
 def allele_counts(
@@ -167,3 +203,221 @@ def variance(
         return (XX / grg.num_individuals) - ((mult_const * afreq) ** 2)
     else:
         return mult_const * afreq * (1.0 - afreq)
+
+
+def _star_snphwe_pygrgl(arglist):
+    het_A, hom_A, other, mut_ids = arglist
+    return (pygrgl.hwe_exact_pv(het_A, hom_A, other), mut_ids)
+
+
+def hwe(
+    grg: pygrgl.GRG,
+    jobs: int = 1,
+    show_progress: bool = False,
+    return_counts: bool = False,
+) -> Union[numpy.typing.NDArray, Tuple[numpy.typing.NDArray, numpy.typing.NDArray]]:
+    """
+    Compute hardy-weinberg p-values for all variants in the GRG. Missing data is not yet supported.
+
+    NOTES:
+
+    * Multi-allelic sites only have p-values calculated for the REF/ALT combinations that are present,
+      and the calculations are based on hetALT, homALT, and other, where other is the number of genotypes
+      that do not contain ALT. We do not "flip" the ALT and REF and test hetREF, homREF, etc.
+
+    :param grg: The GRG.
+    :type grg: pygrgl.GRG
+    :param jobs: Number of parallel jobs to run (threads). Default: 1.
+    :type jobs: int
+    :param show_progress: Show progress bar on sys.stderr. Default: False.
+    :type show_progress: bool
+    :return: A numpy array of length num_mutations, containing a p-value for each mutation.
+    :rtype: numpy.array
+    """
+    # TODO: better testing with missing data in general, but also GRGL should be able to detect whether
+    # there are partially missing genotypes as well.
+    if grg.has_missing_data:
+        print(
+            "WARNING! HWE implementation is formulated for missingness to be per-individual, not per-haplotype. "
+            "Your results may be inaccurate if you have partially missing genotypes",
+            file=sys.stderr,
+        )
+        raise RuntimeError("Missing data not yet supported for HWE")
+
+    if show_progress:
+        print(f"Calculating heterozygote and homozygote counts...", file=sys.stderr)
+    # Get the het and hom count information for all variants
+    inmat = numpy.vstack(
+        [
+            numpy.zeros(grg.num_samples, dtype=numpy.int32),  # hom only
+            numpy.ones(grg.num_samples, dtype=numpy.int32),  # het and hom
+        ]
+    )
+    zyg_info = pygrgl.matmul(
+        grg,
+        inmat,
+        pygrgl.TraversalDirection.UP,
+        init="xtx",
+    )
+    del inmat
+    hom_A = zyg_info[0] // 2
+    het_A = zyg_info[1] - (zyg_info[0] * 2)
+    del zyg_info
+    n_A = het_A + 2 * hom_A
+    if show_progress:
+        print(f"Done.", file=sys.stderr)
+
+    # TODO: subtract missingness from "other"
+    other = (grg.num_individuals - (het_A + hom_A)).tolist()
+
+    # Faster access.
+    hom_A = hom_A.tolist()
+    het_A = het_A.tolist()
+
+    if show_progress:
+        print(f"Calculating HWE p-values...", file=sys.stderr)
+    pvalues = numpy.zeros(grg.num_mutations)
+    if jobs == 1:
+        progress = (lambda x: x) if not show_progress else tqdm
+        for mut_id in range(grg.num_mutations):
+            pvalues[mut_id] = pygrgl.hwe_exact_pv(
+                het_A[mut_id], hom_A[mut_id], other[mut_id]
+            )
+    else:
+        batch_size = 1000
+        arglist = [
+            (het_A[mut_id], hom_A[mut_id], other[mut_id], mut_id)
+            for mut_id in range(grg.num_mutations)
+        ]
+        with Pool(jobs) as pool:
+            if show_progress:
+                results = list(
+                    tqdm(
+                        pool.imap_unordered(_star_snphwe_pygrgl, arglist, batch_size),
+                        total=grg.num_mutations,
+                    )
+                )
+            else:
+                results = list(
+                    pool.imap_unordered(_star_snphwe_pygrgl, arglist, batch_size)
+                )
+            for result, b in results:
+                pvalues[b] = result
+    if show_progress:
+        print(f"Done.", file=sys.stderr)
+    if return_counts:
+        return pvalues, n_A
+    return pvalues
+
+
+def hwe_df(
+    grg: pygrgl.GRG,
+    jobs: int = 1,
+    show_progress: bool = False,
+) -> pandas.DataFrame:
+    """
+    Compute hardy-weinberg p-values for all variants in the GRG. Missing data is not yet supported.
+
+    NOTES:
+
+    * Multi-allelic sites only have p-values calculated for the REF/ALT combinations that are present,
+      and the calculations are based on hetALT, homALT, and other, where other is the number of genotypes
+      that do not contain ALT. We do not "flip" the ALT and REF and test hetREF, homREF, etc.
+
+    :param grg: The GRG.
+    :type grg: pygrgl.GRG
+    :param jobs: Number of parallel jobs to run (threads). Default: 1.
+    :type jobs: int
+    :param show_progress: Show progress bar on sys.stderr. Default: False.
+    :type show_progress: bool
+    :return: A DataFrame containing "POS", "ALT", "COUNT", and "P".
+    :rtype: pandas.DataFrame
+    """
+    pvalues, n_A = hwe(grg, jobs=jobs, show_progress=show_progress, return_counts=True)
+    return common_mut_dataframe(grg, COUNT=n_A, P=pvalues)
+
+
+def site_alleles(
+    grg: pygrgl.GRG,
+    alt_only: bool = False,
+    mut_ids: List[int] = [],
+) -> numpy.typing.NDArray:
+    """
+    Compute the number of alleles at the site associated with each mutation (variant).
+    For example, if there is a site with 3 variants A>T, A>G, A>C, then each of those
+    variants (mutations) will have a "4" in their result. Each variant is always bi-allelic,
+    but the site it is associated can have an arbitrary number of alleles.
+
+    :param grg: The GRG.
+    :type grg: pygrgl.GRG
+    :param alt_only: Only count ALT alleles, not REF alleles. Default: False.
+    :type alt_only: bool
+    :param mut_ids: Restrict to the MutationIDs given (e.g., for only looks at SNPs, etc.)
+    :type mut_ids: List[int]
+    :return: A numpy array of length num_mutations, containing a allele count for each mutation.
+    :rtype: numpy.array
+    """
+    result = []
+    allele_set = set()
+    prev_pos = -1
+    to_add = 0
+    mut_id_list = range(grg.num_mutations) if not mut_ids else mut_ids
+    for mut_id in mut_id_list:
+        mut = grg.get_mutation_by_id(mut_id)
+        if prev_pos == mut.position:
+            allele_set.add(mut.allele)
+            if not alt_only:
+                allele_set.add(mut.ref_allele)
+            to_add += 1
+        else:
+            if allele_set:
+                result.extend([len(allele_set)] * to_add)
+            allele_set = set([mut.allele])
+            if not alt_only:
+                allele_set.add(mut.ref_allele)
+            prev_pos = mut.position
+            to_add = 1
+    if allele_set:
+        result.extend([len(allele_set)] * to_add)
+    res_array = numpy.array(result, dtype=numpy.int32)
+    assert res_array.shape[0] == len(mut_id_list)
+    return res_array
+
+
+def get_variant_type(mut: pygrgl.Mutation) -> VariantType:
+    ref_len = len(mut.ref_allele)
+    alt_len = len(mut.allele)
+    if ref_len == alt_len:
+        if ref_len == 1:
+            my_type = VariantType.SNPS
+        else:
+            my_type = VariantType.MNPS
+    elif ref_len < 50 and alt_len < 50:
+        my_type = VariantType.INDELS
+    else:
+        my_type = VariantType.OTHER
+    return my_type
+
+
+def variants_of_types(
+    grg: pygrgl.GRG,
+    types: Set[VariantType],
+) -> List[int]:
+    """
+    Return the list of MutationIDs for variants of the given types. For example, passing
+    types={VariantTypes.SNPS, VariantTypes.MNPS} will return every mutation that is either a SNP
+    or MNP.
+
+    :param grg: The GRG.
+    :type grg: pygrgl.GRG
+    :param types: Set of VariantType that is the union of types to return.
+    :type types: Set[VariantType]
+    :return: A list of MutationIDs.
+    :rtype: List[int]
+    """
+    result = []
+    for mut_id in range(grg.num_mutations):
+        mut = grg.get_mutation_by_id(mut_id)
+        if get_variant_type(mut) in types:
+            result.append(mut_id)
+    return result

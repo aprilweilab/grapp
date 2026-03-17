@@ -1,4 +1,3 @@
-from enum import Enum
 from grapp.util.filter import (
     grg_save_individuals,
     grg_save_mut_filter,
@@ -9,21 +8,14 @@ from grapp.util.simple import (
     UserInputError,
     allele_counts,
     allele_frequencies,
+    VariantType,
+    get_variant_type,
+    hwe,
 )
 from typing import Set
 import argparse
 import os
 import pygrgl
-
-
-class VariantType(Enum):
-    SNPS = "snps"  # Length=1
-    INDELS = "indels"  # Length <50
-    MNPS = "mnps"  # Length of ALT same as length of REF
-    OTHER = "other"  # Anything else
-
-    def __str__(self):
-        return self.value
 
 
 def variant_type_set(arg_value: str) -> Set[VariantType]:
@@ -67,6 +59,13 @@ def genome_range(arg_value):
 def add_options(subparser: argparse.ArgumentParser):
     subparser.add_argument("grg_input", help="The input GRG file")
     subparser.add_argument("grg_output", help="The output GRG file")
+    subparser.add_argument(
+        "-j",
+        "--jobs",
+        type=int,
+        default=1,
+        help="Number of jobs (threads) to use when computing filters. Only affects certain options.",
+    )
     sample_group = subparser.add_argument_group("sample filters")
     filters = sample_group.add_mutually_exclusive_group()
     # TODO: update the pygrgl APIs to take a filename _or_ a file object, so that we can do stdout piping
@@ -149,6 +148,13 @@ def add_options(subparser: argparse.ArgumentParser):
         help="Only keep sites with at most this many alleles. Counts all REF alleles as 1. "
         "Use '-m 2 -M 2 -v snps' to view only biallelic SNPs.",
     )
+    mutation_group.add_argument(
+        "-H",
+        "--HWE",
+        type=float,
+        default=None,
+        help="Drop all variants with a Hardy-Weinberg two-sided p-value less than the given value.",
+    )
 
 
 def require_unspecified(args, msg, *params):
@@ -203,6 +209,8 @@ def run(args):
             counts = allele_counts(grg)
         if args.min_af is not None or args.max_af is not None:
             freqs = allele_frequencies(grg)
+        if args.HWE is not None:
+            hwe_pvalues = hwe(grg, jobs=args.jobs, show_progress=True)
 
         def filter_method(grg: pygrgl.GRG, mut_id: int):
             mut = grg.get_mutation_by_id(mut_id)
@@ -219,18 +227,11 @@ def run(args):
             if args.max_af is not None and freqs[mut_id] > args.max_af:
                 return False
             if args.types is not None:
-                ref_len = len(mut.ref_allele)
-                alt_len = len(mut.allele)
-                if ref_len == alt_len:
-                    if ref_len == 1:
-                        my_type = VariantType.SNPS
-                    else:
-                        my_type = VariantType.MNPS
-                elif ref_len < 50 and alt_len < 50:
-                    my_type = VariantType.INDELS
-                else:
-                    my_type = VariantType.OTHER
-                return my_type in args.types
+                my_type = get_variant_type(mut)
+                if my_type not in args.types:
+                    return False
+            if args.HWE is not None and hwe_pvalues[mut_id] < args.HWE:
+                return False
             return True
 
         kept, dropped = grg_save_mut_filter(
