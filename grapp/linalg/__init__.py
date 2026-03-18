@@ -155,7 +155,8 @@ def get_eig_pcs(
     op_kwargs: Dict[str, Any] = {},
     threads: int = 1,
     verbose: bool = True,
-) -> Tuple[NDArray, NDArray]:
+    do_xtx: bool = False,
+) -> Tuple[NDArray, NDArray, Optional[NDArray]]:
     """
     Get the principal components for each sample corresponding to the first :math:`k` eigenvectors from a GRG,
     using an iterative eigenvector decomposition method.
@@ -171,27 +172,63 @@ def get_eig_pcs(
     :type threads: int
     :param verbose: Emit information on stderr.
     :type verboose: bool
+    :param do_xtx: Use eigsh(X^TX) instead of the default eigsh(XX^T). Default: False.
+    :type do_xtx: bool
     :return: A pair (PC_scores, eigen_values) where each is a numpy array.
-    :rtype: Tuple[numpy.ndarray, numpy.ndarray]
+    :rtype: Tuple[numpy.ndarray, numpy.ndarray, Optional[numpy.ndarray]]
     """
     freqs: Union[List[numpy.typing.NDArray], numpy.typing.NDArray]
     if isinstance(grgs, list):
         executor = concurrent.futures.ThreadPoolExecutor(threads)
         futures = [executor.submit(_allele_frequencies, grg) for grg in grgs]
         freqs = [f.result() for f in futures]
-        op = MultiSciPyStdXXTOperator(
-            grgs, freqs, haploid=False, threads=threads, **op_kwargs
-        )
+        if do_xtx:
+            op = MultiSciPyStdXTXOperator(
+                grgs, freqs, haploid=False, threads=threads, **op_kwargs
+            )
+        else:
+            op = MultiSciPyStdXXTOperator(
+                grgs, freqs, haploid=False, threads=threads, **op_kwargs
+            )
     else:
         freqs = _allele_frequencies(grgs, adjust_missing=True)
-        op = SciPyStdXXTOperator(grgs, freqs, haploid=False, **op_kwargs)
+        if do_xtx:
+            op = SciPyStdXTXOperator(grgs, freqs, haploid=False, **op_kwargs)
+        else:
+            op = SciPyStdXXTOperator(grgs, freqs, haploid=False, **op_kwargs)
     if verbose:
-        print(f"Running eigen decomposition on {op.shape[0]} individuals")
+        what = "variants" if do_xtx else "individuals"
+        print(f"Running eigen decomposition on {op.shape[0]} {what}")
 
     eigen_values, eigen_vectors = eigsh(op, k=k, which="LM")
     sort_by_eigvalues(eigen_values, eigen_vectors)
     assert eigen_vectors.real.dtype == numpy.float64
-    return eigen_vectors, eigen_values
+    if not do_xtx:
+        return eigen_vectors, eigen_values, None
+
+    # If we did X^TX then we need to get the PC scores by performing one more product
+    if isinstance(grgs, list):
+        pc_op = MultiSciPyStdXOperator(
+            grgs,
+            pygrgl.TraversalDirection.UP,
+            freqs,  # type: ignore
+            haploid=False,
+            threads=threads,
+            **op_kwargs,
+        )
+    else:
+        pc_op = SciPyStdXOperator(
+            grgs,
+            pygrgl.TraversalDirection.UP,
+            freqs,  # type: ignore
+            haploid=False,
+            **op_kwargs,
+        )
+    # ... and then scaling the result
+    PC_scores = (
+        pc_op._matmat(eigen_vectors.real) / numpy.sqrt(eigen_values.real)[None, :]
+    )
+    return PC_scores, eigen_values, eigen_vectors
 
 
 def PCs(
@@ -211,7 +248,8 @@ def PCs(
         eigenvalues.
     :type k: int
     :param include_eig: When True, the return value is a triple of (DataFrame, EigenValues, EigenVectors),
-        where the eigen values are as returned by scipy.sparse.linalg.eigsh(), and the eigenvalues are only provided when use_pro_pca=True. Default: False.
+        where the eigen values are as returned by scipy.sparse.linalg.eigsh(). This can increase RAM usage
+        because it forces the use of :math:`X^TX` instead of :math:`XX^T`. Default: False.
     :type include_eig: bool
     :param sample_window: If provided, defines a window width in base-pair. Within each window (starting at
         the Mutation with the lowest coordinate) randomly choose a single SNP and use that for performing
@@ -250,10 +288,13 @@ def PCs(
             grg_list, k, threads=threads, op_kwargs={"mutation_filter": mutation_filter}
         )
     else:
-        PC_scores, eigen_values = get_eig_pcs(
-            grg_list, k, threads=threads, op_kwargs={"mutation_filter": mutation_filter}
+        PC_scores, eigen_values, eigen_vectors = get_eig_pcs(
+            grg_list,
+            k,
+            threads=threads,
+            op_kwargs={"mutation_filter": mutation_filter},
+            do_xtx=include_eig,
         )
-        eigen_vectors = None
 
     colnames = [f"PC{i+1}" for i in range(PC_scores.shape[1])]
     df = pd.DataFrame(PC_scores, columns=colnames, copy=False)
