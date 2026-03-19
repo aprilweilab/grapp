@@ -3,6 +3,7 @@ from grapp.linalg import (
 )
 from grapp.cli.util import pandas_to_tsv
 import argparse
+import numpy
 import os
 import pygrgl
 
@@ -41,6 +42,12 @@ def add_options(subparser):
         default=1,
         help="Number of jobs (threads) to use. Will only use up to the number of GRG files. Default: 1",
     )
+    subparser.add_argument(
+        "-e",
+        "--save-eigs",
+        default=None,
+        help="Save the eigenvectors and eigenvalues to a file with the given prefix.",
+    )
 
 
 def run(args):
@@ -53,7 +60,16 @@ def run(args):
         use_pro_pca=args.pro_pca,
         sample_window=args.sample_window,
         threads=args.jobs,
+        include_eig=(args.save_eigs is not None),
     )
+    if args.save_eigs is not None:
+        scores, eigen_values, eigen_vectors = scores
+        val_out = args.save_eigs + ".vals.txt"
+        numpy.savetxt(val_out, eigen_values)
+        print(f"Wrote eigenvalues to {val_out}")
+        vec_out = args.save_eigs + ".vecs.txt"
+        numpy.savetxt(vec_out, eigen_vectors)
+        print(f"Wrote eigenvectors to {vec_out}")
 
     if args.pcs_out is None:
         base = os.path.basename(args.grg_input[0])
