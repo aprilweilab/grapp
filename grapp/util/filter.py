@@ -144,6 +144,7 @@ def grg_save_range(
     grg_or_filename: Union[pygrgl.GRG, str],
     out_filename: str,
     bp_range: Tuple[int, int],
+    ignore_empty: bool = False,
 ):
     """
     Given a GRG filename or object, save a new GRG that contains only the Mutations in
@@ -163,7 +164,9 @@ def grg_save_range(
         position = grg.get_mutation_by_id(mut_id).position
         return position >= bp_range[0] and position < bp_range[1]
 
-    return grg_save_mut_filter(grg_or_filename, out_filename, keep_mut, bp_range)
+    return grg_save_mut_filter(
+        grg_or_filename, out_filename, keep_mut, bp_range, ignore_empty=ignore_empty
+    )
 
 
 def grg_save_freq(
@@ -203,6 +206,7 @@ def grg_save_mut_filter(
     apply_to_sites: bool = False,
     min_variants: int = 0,
     max_variants: int = 2**32,
+    ignore_empty: bool = False,
 ):
     """
     Given a GRG filename or object, save a new GRG that contains only the Mutations selected
@@ -225,6 +229,9 @@ def grg_save_mut_filter(
     :type min_variants: int
     :param max_variants: Any site with more variants than this will be dropped.
     :type max_variants: int
+    :param ignore_empty: When True, just skip the creation of GRGs that would be empty. Otherwise,
+        an exception will be raised if you try to create an empty GRG.
+    :type ignore_empty: bool
     :return: Tuple (mutations kept, mutations dropped)
     :rtype: Tuple[int, int]
     """
@@ -252,6 +259,8 @@ def grg_save_mut_filter(
         else:
             seeds.extend(keep_muts)
     if not seeds:
+        if ignore_empty:
+            return (0, 0)
         raise UserInputError(
             "No Mutations found matching range; cannot filter to an empty GRG."
         )
@@ -320,6 +329,10 @@ def multi_grg_save_mut_filter(
         prev_mut_id += grg.num_mutations
 
 
+def _split_by_range_helper(args):
+    return grg_save_range(args[0], args[1], args[2], ignore_empty=True)
+
+
 def split_by_ranges(
     grg_filename: str,
     ranges: List[Tuple[int, int]],
@@ -339,7 +352,8 @@ def split_by_ranges(
     :param out_dir: Output directory to put the split pieces into. If None, then use the
         current working directory. Default: None.
     :type out_dir: Optional[str]
-    :return: List of filenames for the resulting GRG files.
+    :return: List of filenames for the resulting GRG files. If the file does not exist, then
+        it would have been an empty graph.
     :rtype: List[str]
     """
     basename = os.path.basename(grg_filename)
@@ -350,5 +364,5 @@ def split_by_ranges(
             out_filename = os.path.join(out_dir, out_filename)
         arguments.append((grg_filename, out_filename, r))
     with Pool(jobs) as pool:
-        pool.starmap(grg_save_range, arguments)
+        pool.map(_split_by_range_helper, arguments)
     return [t[1] for t in arguments]
