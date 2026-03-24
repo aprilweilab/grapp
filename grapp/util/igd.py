@@ -182,8 +182,9 @@ def export_igd(
             )
             arguments = [
                 (part, os.path.join(tmpdirname, "part_"), batch_size)
-                for part in grg_parts
+                for part in filter(os.path.isfile, grg_parts)
             ]
+            assert len(arguments) > 0, "No GRG parts found"
             logv("Converting GRG parts to IGD files...")
             with Pool(jobs) as pool:
                 igd_parts = pool.starmap(_grg2igd, arguments)
