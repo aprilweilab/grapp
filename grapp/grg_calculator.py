@@ -5,6 +5,11 @@ import concurrent.futures
 from typing import Optional, Union, Dict, Callable, List, Any
 from grapp.util.exceptions import UserInputError
 
+try:
+    import pygrgl_spmv
+except ImportError:
+    pygrgl_spmv = None  # typing: ignore
+
 
 class GRGWaitable(ABC):
     """
@@ -184,6 +189,78 @@ class GRGCalculator(GRGCalcInterface):
         return GRGThreadSched(executor)
 
 
+class GRGSpMVCalculator(GRGCalcInterface):
+    """
+    Implementaion of the GRG calculator interface for the SPMV-based GRG.
+    """
+
+    def __init__(self, grg_spmv):
+        self._op = grg_spmv
+
+    @property
+    def num_samples(self) -> int:
+        return self._op.num_samples
+
+    @property
+    def num_individuals(self) -> int:
+        return self._op.num_individuals
+
+    @property
+    def num_mutations(self) -> int:
+        return self._op.num_mutations
+
+    @property
+    def ploidy(self) -> int:
+        return self._op.ploidy
+
+    @property
+    def is_phased(self) -> bool:
+        raise NotImplementedError
+
+    @property
+    def num_nodes(self) -> int:
+        return self._op.num_nodes
+
+    @property
+    def num_edges(self) -> int:
+        return self._op.num_edges
+
+    @property
+    def has_missing_data(self) -> bool:
+        return self._op.has_missing_data
+
+    def get_mutation_by_id(self, id: int) -> pygrgl.Mutation:
+        return self._op.get_mutation_by_id(id)
+
+    def _convert_dir(self, d: pygrgl.TraversalDirection):
+        if d == pygrgl.TraversalDirection.DOWN:
+            return "down"
+        else:
+            assert d == pygrgl.TraversalDirection.UP
+            return "up"
+
+    def matmul(
+        self,
+        input: numpy.typing.NDArray,
+        direction: pygrgl.TraversalDirection,
+        emit_all_nodes: bool = False,
+        by_individual: bool = False,
+        init: Optional[Union[str, numpy.typing.NDArray]] = None,
+        miss: Optional[numpy.typing.NDArray] = None,
+    ) -> numpy.typing.NDArray:
+        return self._op.matmul(
+            input,
+            self._convert_dir(direction),
+            emit_all_nodes=emit_all_nodes,
+            by_individual=by_individual,
+            init=init,
+            miss=miss,
+        )
+
+    def make_scheduler(self, grgs: List["GRGCalcInterface"], workers: int = 1):
+        raise NotImplementedError("Not yet implemented")
+
+
 def load_grg_calculator(filename: str) -> GRGCalcInterface:
     """
     Load a file as one of the supported GRG calculator file types.
@@ -195,6 +272,10 @@ def load_grg_calculator(filename: str) -> GRGCalcInterface:
             )
         ),
     }
+    if pygrgl_spmv is not None:
+        extension_to_loader[".grg_spmv"] = lambda filename: GRGSpMVCalculator(
+            pygrgl_spmv.load(filename)
+        )
     for ext, loader in extension_to_loader.items():
         if filename.endswith(ext):
             return loader(filename)
