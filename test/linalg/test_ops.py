@@ -11,13 +11,13 @@ from grapp.linalg.ops_scipy import (
 )
 from grapp.util import allele_frequencies
 from grapp.util.filter import grg_save_samples
-import itertools
+from grapp.grg_calculator import GRGCalculator
+from parameterized import parameterized
 import numpy
 import os
 import pygrgl
 import sys
 import unittest
-import pytest
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(THIS_DIR, ".."))
@@ -44,7 +44,13 @@ class TestLinearOperators(unittest.TestCase):
 
         numpy.random.seed(42)
 
-    def test_simple_op(self):
+    @parameterized.expand(
+        [
+            (lambda g: g,),
+            (GRGCalculator,),
+        ]
+    )
+    def test_simple_op(self, wrap_grg):
         """
         The simple operator works on the genotype matrix without any modification. In this case,
         the diploid and haploid formulations should product the same result.
@@ -63,30 +69,42 @@ class TestLinearOperators(unittest.TestCase):
         self.assertAlmostEqual(numpy.sum(numpy_hap_result), numpy.sum(numpy_dip_result))
 
         grg_hap_op = SciPyXOperator(
-            self.grg, pygrgl.TraversalDirection.UP, haploid=True
+            wrap_grg(self.grg), pygrgl.TraversalDirection.UP, haploid=True
         )
         grg_hap_result = grg_hap_op._matmat(random_input)
         numpy.testing.assert_allclose(grg_hap_result, numpy_hap_result)
 
-    def test_XXT(self):
+    @parameterized.expand(
+        [
+            (lambda g: g,),
+            (GRGCalculator,),
+        ]
+    )
+    def test_XXT(self, wrap_grg):
         K = 20  # Use 20 random vectors for test.
         random_input = numpy.random.standard_normal((K, self.grg.num_samples)).T
 
         X_hap = grg2X(self.grg, diploid=False)
         numpy_hap_result = numpy.matmul(X_hap @ X_hap.T, random_input)
 
-        grg_hap_op = SciPyXXTOperator(self.grg, haploid=True)
+        grg_hap_op = SciPyXXTOperator(wrap_grg(self.grg), haploid=True)
         grg_hap_result = grg_hap_op._matmat(random_input)
         numpy.testing.assert_allclose(grg_hap_result, numpy_hap_result)
 
         random_input = numpy.random.standard_normal((K, self.grg.num_individuals)).T
         X_dip = grg2X(self.grg, diploid=True)
         numpy_dip_result = numpy.matmul(X_dip @ X_dip.T, random_input)
-        grg_dip_op = SciPyXXTOperator(self.grg, haploid=False)
+        grg_dip_op = SciPyXXTOperator(wrap_grg(self.grg), haploid=False)
         grg_dip_result = grg_dip_op._matmat(random_input)
         numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
 
-    def test_standardized_op_X(self):
+    @parameterized.expand(
+        [
+            (lambda g: g,),
+            (GRGCalculator,),
+        ]
+    )
+    def test_standardized_op_X(self, wrap_grg):
         K = 20  # Use 20 random vectors for test.
         random_input = numpy.random.standard_normal((K, self.grg.num_mutations)).T
 
@@ -95,7 +113,9 @@ class TestLinearOperators(unittest.TestCase):
         numpy_result = numpy.matmul(X_stand, random_input)
 
         freqs = allele_frequencies(self.grg)
-        grg_op = SciPyStdXOperator(self.grg, pygrgl.TraversalDirection.UP, freqs)
+        grg_op = SciPyStdXOperator(
+            wrap_grg(self.grg), pygrgl.TraversalDirection.UP, freqs
+        )
         grg_result = grg_op._matmat(random_input)
 
         self.assertFalse(numpy.any(numpy.isinf(grg_result)))

@@ -2,3 +2,4 @@ pyigd
 pytest
 pandas
 scipy
+parameterized

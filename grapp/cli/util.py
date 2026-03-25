@@ -1,6 +1,8 @@
 import numpy
 import pandas
+import pygrgl
 from typing import Optional, List, TextIO, Union
+from grapp.util.exceptions import UserInputError
 
 
 def numpy_to_tsv(
@@ -22,3 +24,9 @@ def pandas_to_tsv(
     dataframe: pandas.DataFrame,
 ):
     dataframe.to_csv(file_obj, sep="\t", index=False)
+
+
+def load_immutable(filename: str, load_up_edges: bool = False) -> pygrgl.GRG:
+    if not filename.endswith(".grg"):
+        raise UserInputError("Only .grg files are supported for this operation.")
+    return pygrgl.load_immutable_grg(filename, load_up_edges=load_up_edges)

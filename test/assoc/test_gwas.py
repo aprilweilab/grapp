@@ -6,10 +6,10 @@ import pygrgl
 import sys
 import tempfile
 import unittest
-from collections import defaultdict
 from grapp.assoc import linear_assoc_no_covar, linear_assoc_covar, read_pheno
-from grapp.linalg import PCs
 from grapp.util.filter import grg_save_samples
+from grapp.grg_calculator import GRGCalculator
+from parameterized import parameterized
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(THIS_DIR, ".."))
@@ -38,8 +38,14 @@ class TestGWAS(unittest.TestCase):
         pcs_baseline_path = os.path.join(INPUT_DIR, "test.10pcs.tsv")
         cls.PCs = pd.read_csv(pcs_baseline_path, delimiter="\t")
 
-    def test_gwas_no_covar_vs_baseline(self):
-        df_py = linear_assoc_no_covar(self.grg, self.Y)
+    @parameterized.expand(
+        [
+            (lambda g: g,),
+            (GRGCalculator,),
+        ]
+    )
+    def test_gwas_no_covar_vs_baseline(self, wrap_grg):
+        df_py = linear_assoc_no_covar(wrap_grg(self.grg), self.Y)
 
         # Check same number of rows
         self.assertEqual(
@@ -72,9 +78,15 @@ class TestGWAS(unittest.TestCase):
                 assert not math.isnan(val_py), fail_msg
                 assert diff <= atol or rel_err <= rtol, fail_msg
 
-    def test_gwas_covar(self):
+    @parameterized.expand(
+        [
+            (lambda g: g,),
+            (GRGCalculator,),
+        ]
+    )
+    def test_gwas_covar(self, wrap_grg):
         C = self.PCs.to_numpy()
-        df_nonstd = linear_assoc_covar(self.grg, self.Y, C)
+        df_nonstd = linear_assoc_covar(wrap_grg(self.grg), self.Y, C)
         self.assertFalse(numpy.any(numpy.isinf(df_nonstd["BETA"].to_numpy())))
         # Compare against the baseline of known values. This is just a test to make sure
         # nothing changes, as the baselined results have been verified for correctness.
@@ -89,7 +101,9 @@ class TestGWAS(unittest.TestCase):
                 base_column,
                 err_msg=f"Failed on column: {column}",
             )
-        df_nonstd_regress = linear_assoc_covar(self.grg, self.Y, C, method="regress")
+        df_nonstd_regress = linear_assoc_covar(
+            wrap_grg(self.grg), self.Y, C, method="regress"
+        )
 
         qr_nans = df_nonstd["BETA"].isna().sum()
         reg_nans = df_nonstd_regress["BETA"].isna().sum()
@@ -108,18 +122,24 @@ class TestGWAS(unittest.TestCase):
                 pretty_close += 1
         self.assertGreater(pretty_close / total, 0.9)
 
-        df_std = linear_assoc_covar(self.grg, self.Y, C, standardize=True)
+        df_std = linear_assoc_covar(wrap_grg(self.grg), self.Y, C, standardize=True)
         self.assertEqual(len(df_nonstd), len(df_std))
         self.assertEqual(self.grg.num_mutations, len(df_std))
 
-    def test_gwas_no_covar_dists(self):
+    @parameterized.expand(
+        [
+            (lambda g: g,),
+            (GRGCalculator,),
+        ]
+    )
+    def test_gwas_no_covar_dists(self, wrap_grg):
         """
         The binomial method and the sample method should be very similar on neutral simulated data
         of large sample size. For small sample sizes (like this test), the deviation can be quite
         large.
         """
-        df_sample = linear_assoc_no_covar(self.grg, self.Y)
-        df_binomial = linear_assoc_no_covar(self.grg, self.Y, dist="binomial")
+        df_sample = linear_assoc_no_covar(wrap_grg(self.grg), self.Y)
+        df_binomial = linear_assoc_no_covar(wrap_grg(self.grg), self.Y, dist="binomial")
 
         sample_nans = df_sample["BETA"].isna().sum()
         binomial_nans = df_binomial["BETA"].isna().sum()
@@ -133,7 +153,13 @@ class TestGWAS(unittest.TestCase):
             small_err_proportion, 0.99
         )  # 99% of errors are less than 20% relative error
 
-    def test_gwas_no_covar_missing_Y(self):
+    @parameterized.expand(
+        [
+            (lambda g: g,),
+            (GRGCalculator,),
+        ]
+    )
+    def test_gwas_no_covar_missing_Y(self, wrap_grg):
         """
         When there are missing phenotypes (Y), they are represented as NaN. In this case, we need to scale
         the variance term in the GWAS appropriately. The calculation should be numerically close to removing
@@ -156,16 +182,20 @@ class TestGWAS(unittest.TestCase):
         self.assertEqual(filt_grg.num_individuals, Y_kept.shape[0])
 
         # Use binomial estimates
-        true_sample_df = linear_assoc_no_covar(filt_grg, Y_kept, dist="binomial")
-        mask_sample_df = linear_assoc_no_covar(self.grg, Y_miss, dist="binomial")
+        true_sample_df = linear_assoc_no_covar(
+            wrap_grg(filt_grg), Y_kept, dist="binomial"
+        )
+        mask_sample_df = linear_assoc_no_covar(
+            wrap_grg(self.grg), Y_miss, dist="binomial"
+        )
         true_nans = true_sample_df["BETA"].isna().sum()
         mask_nans = mask_sample_df["BETA"].isna().sum()
         self.assertEqual(true_nans, mask_nans)
         numpy.testing.assert_allclose(true_sample_df["BETA"], mask_sample_df["BETA"])
 
         # Use sample estimates (default dist)
-        true_sample_df = linear_assoc_no_covar(filt_grg, Y_kept)
-        mask_sample_df = linear_assoc_no_covar(self.grg, Y_miss)
+        true_sample_df = linear_assoc_no_covar(wrap_grg(filt_grg), Y_kept)
+        mask_sample_df = linear_assoc_no_covar(wrap_grg(self.grg), Y_miss)
         true_nans = true_sample_df["BETA"].isna().sum()
         mask_nans = mask_sample_df["BETA"].isna().sum()
         self.assertGreaterEqual(true_nans, mask_nans)
@@ -212,10 +242,10 @@ class TestGWAS(unittest.TestCase):
                 ],
             )
 
-    def _run_and_verify_covar_baseline(self, Y, C, baseline_name):
+    def _run_and_verify_covar_baseline(self, Y, C, baseline_name, wrap_grg):
         covar_baseline_path = os.path.join(INPUT_DIR, baseline_name)
         covar_baseline = pd.read_csv(covar_baseline_path, delimiter="\t")
-        df_covar = linear_assoc_covar(self.grg, Y, C)
+        df_covar = linear_assoc_covar(wrap_grg(self.grg), Y, C)
         self.assertFalse(numpy.any(numpy.isinf(df_covar["BETA"].to_numpy())))
         ## Compare against the baseline of known values. This is just a test to make sure
         ## nothing changes, as the baselined results have been verified for correctness.
@@ -233,7 +263,13 @@ class TestGWAS(unittest.TestCase):
 
     # Test a bunch of extra scenarios with covariates: uncentered phenotypes, non-standardized phenotypes,
     # PCs as covariates, a binary covariate, etc.
-    def test_gwas_covar_extra(self):
+    @parameterized.expand(
+        [
+            (lambda g: g,),
+            (GRGCalculator,),
+        ]
+    )
+    def test_gwas_covar_extra(self, wrap_grg):
         # These covariates should change nothing about the GWAS
         # XXX this one is too numerically unstable between different environments.
         # C = numpy.ones((self.Y.shape[0], 1))
@@ -242,7 +278,9 @@ class TestGWAS(unittest.TestCase):
         # PCA + uncentered phenotypes
         Y = self.Y.copy() + 100
         C = self.PCs.to_numpy()[:, :5]  # First 5 PCs
-        self._run_and_verify_covar_baseline(Y, C, "uncentered.covars.baseline.tsv")
+        self._run_and_verify_covar_baseline(
+            Y, C, "uncentered.covars.baseline.tsv", wrap_grg
+        )
 
         # These phenotypes and covariates were generated to be independent of the genotypes
         # but correlated with each other. The code was:
@@ -256,7 +294,9 @@ class TestGWAS(unittest.TestCase):
         )
         print(rc_Y.shape)
         print(rc_C.shape)
-        self._run_and_verify_covar_baseline(rc_Y, rc_C, "randcovar.covars.baseline.tsv")
+        self._run_and_verify_covar_baseline(
+            rc_Y, rc_C, "randcovar.covars.baseline.tsv", wrap_grg
+        )
 
     @classmethod
     def tearDownClass(cls):

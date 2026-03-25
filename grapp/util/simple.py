@@ -2,6 +2,10 @@
 Simple utility functions.
 """
 
+from grapp.grg_calculator import (
+    GRGCalcInterface as _GRGCalcInterface,
+    _wrap_grg,
+)
 from enum import Enum
 from multiprocessing import Pool
 from typing import Union, Tuple, List, Optional, Set
@@ -10,10 +14,6 @@ import pandas
 import pygrgl
 import numpy
 import sys
-
-
-class UserInputError(Exception):
-    pass
 
 
 class VariantType(Enum):
@@ -48,7 +48,7 @@ def _div_or_default(a, b, d):
     return numpy.divide(a, b, out=result, where=(b != 0))
 
 
-def common_mut_dataframe(grg, **kwargs):
+def common_mut_dataframe(grg: _GRGCalcInterface, **kwargs):
     """
     Generate the "common" output format for mutation-based dataframes, which has "POS", "ALT",
     and "REF" in the first three columns, and then whatever extra columns the user provides.
@@ -71,7 +71,7 @@ def common_mut_dataframe(grg, **kwargs):
 
 
 def allele_counts(
-    grg: pygrgl.GRG,
+    grg: Union[pygrgl.GRG, _GRGCalcInterface],
     return_missing: bool = False,
     sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
 ) -> Union[numpy.typing.NDArray, Tuple[numpy.typing.NDArray, numpy.typing.NDArray]]:
@@ -88,6 +88,7 @@ def allele_counts(
         indexed by MutationID.
     :rtype: numpy.ndarray
     """
+    grg = _wrap_grg(grg)
     if isinstance(sample_filter, numpy.ndarray):
         sample_filter = sample_filter.tolist()
     if sample_filter is not None:
@@ -106,7 +107,7 @@ def allele_counts(
         input_mat[:, sample_filter] = 1
     else:
         input_mat = numpy.ones((1, grg.num_samples), dtype=numpy.int32)
-    acounts = pygrgl.matmul(grg, input_mat, pygrgl.TraversalDirection.UP, **kwargs)[0]
+    acounts = grg.matmul(input_mat, pygrgl.TraversalDirection.UP, **kwargs)[0]  # type: ignore
     if miss_counts is not None:
         miss_counts = miss_counts[0]
         assert miss_counts is not None
@@ -115,7 +116,7 @@ def allele_counts(
 
 
 def allele_frequencies(
-    grg: pygrgl.GRG,
+    grg: Union[pygrgl.GRG, _GRGCalcInterface],
     adjust_missing: bool = False,
     sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
 ) -> numpy.typing.NDArray:
@@ -133,6 +134,7 @@ def allele_frequencies(
         indexed by MutationID.
     :rtype: numpy.ndarray
     """
+    grg = _wrap_grg(grg)
     with numpy.errstate(divide="raise"):
         if adjust_missing:
             acounts, miss_counts = allele_counts(
@@ -155,7 +157,7 @@ def allele_frequencies(
 
 
 def variance(
-    grg: pygrgl.GRG,
+    grg: Union[pygrgl.GRG, _GRGCalcInterface],
     dist: str = _GenotypeDist.BINOMIAL.value,
     adjust_missing: bool = False,
     sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
@@ -178,6 +180,7 @@ def variance(
         indexed by MutationID.
     :rtype: numpy.ndarray
     """
+    grg = _wrap_grg(grg)
     mult_const = 1 if haploid else grg.ploidy
     acount, miss_count = allele_counts(
         grg, return_missing=True, sample_filter=sample_filter
@@ -194,8 +197,7 @@ def variance(
         ), "The sample-based variance can only be computed for diploids"
         # diag(X^T @ X) / n = Var[X] + E[X]^2
         # --> Var[X] = (diag(X^T @ X) / n) - E[X]^2
-        XX = pygrgl.matmul(
-            grg,
+        XX = grg.matmul(
             numpy.ones((1, grg.num_samples), dtype=numpy.int32),
             pygrgl.TraversalDirection.UP,
             init="xtx",

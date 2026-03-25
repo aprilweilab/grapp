@@ -5,6 +5,8 @@ from grapp.linalg import (
     get_pcs_propca,
     sort_by_eigvalues,
 )
+from grapp.grg_calculator import GRGCalculator
+from parameterized import parameterized
 import pygrgl
 import numpy
 import os
@@ -30,7 +32,13 @@ class TestPCA(unittest.TestCase):
         # Up edges needed for grg2X
         cls.grg = pygrgl.load_immutable_grg(cls.grg_filename, load_up_edges=False)
 
-    def test_eigvals(self):
+    @parameterized.expand(
+        [
+            (lambda g: g,),
+            (GRGCalculator,),
+        ]
+    )
+    def test_eigvals(self, wrap_grg):
         X_stand = standardize_X(grg2X(self.grg, diploid=True))
 
         D = X_stand.T @ X_stand
@@ -40,7 +48,7 @@ class TestPCA(unittest.TestCase):
         # correct order.
         sort_by_eigvalues(evals, evects)
 
-        grg_evals, grg_evects = grg_eigs(MatrixSelection.XTX, self.grg, 15)
+        grg_evals, grg_evects = grg_eigs(MatrixSelection.XTX, wrap_grg(self.grg), 15)
         numpy.testing.assert_array_almost_equal(
             numpy.flip(numpy.sort(grg_evals)), grg_evals, 10
         )
@@ -50,17 +58,29 @@ class TestPCA(unittest.TestCase):
             self.assertTrue(numpy.allclose(ev, gev) or numpy.allclose(-ev, gev))
 
     # Just make sure PCA succeeds
-    def test_pca_smoketest(self):
+    @parameterized.expand(
+        [
+            (lambda g: g,),
+            (GRGCalculator,),
+        ]
+    )
+    def test_pca_smoketest(self, wrap_grg):
         # Not all recent versions of scipy support passing in a random number generator,
         # so we need to do this instead for testing purposes
         numpy.random.seed(42)
-        scores = PCs(self.grg, k=20).to_numpy()
+        scores = PCs(wrap_grg(self.grg), k=20).to_numpy()
         pca_expect = numpy.loadtxt(os.path.join(INPUT_DIR, "pca.expected.txt"))
         numpy.testing.assert_allclose(numpy.abs(scores), numpy.abs(pca_expect))
 
     # Just make sure PCA succeeds
-    def test_propca_smoketest(self):
-        scores, _, _ = get_pcs_propca(self.grg, k=20, convergence_lim=1e-5)
+    @parameterized.expand(
+        [
+            (lambda g: g,),
+            (GRGCalculator,),
+        ]
+    )
+    def test_propca_smoketest(self, wrap_grg):
+        scores, _, _ = get_pcs_propca(wrap_grg(self.grg), k=20, convergence_lim=1e-5)
         propca_expect = numpy.loadtxt(os.path.join(INPUT_DIR, "propca.expected.txt"))
         numpy.testing.assert_allclose(
             numpy.abs(scores), numpy.abs(propca_expect), atol=0.005
