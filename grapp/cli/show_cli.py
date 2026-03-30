@@ -1,13 +1,13 @@
 import argparse
 import numpy
 import pandas
-import pygrgl
 import sys
 from collections import defaultdict
 from grapp.util.simple import (
     allele_counts,
     allele_frequencies,
 )
+from grapp.cli.util import load_immutable
 from grapp.util.simple import hwe_df
 
 
@@ -60,7 +60,7 @@ def add_options(subparser: argparse.ArgumentParser):
 
 
 def run(args):
-    grg = pygrgl.load_immutable_grg(args.grg_input, load_up_edges=False)
+    grg = load_immutable(args.grg_input, load_up_edges=False)
     if args.info:
         print(f"Mutations: {grg.num_mutations}")
         print(f"Samples: {grg.num_samples}")

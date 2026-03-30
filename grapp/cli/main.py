@@ -4,7 +4,7 @@ from grapp.cli import filter_cli
 from grapp.cli import pca_cli
 from grapp.cli import show_cli
 from grapp.cli import pheno_cli
-from grapp.util.simple import UserInputError
+from grapp.util.exceptions import UserInputError
 
 import argparse
 import sys

@@ -5,13 +5,14 @@ from grapp.util.filter import (
     grg_save_samples,
 )
 from grapp.util.simple import (
-    UserInputError,
     allele_counts,
     allele_frequencies,
     VariantType,
     get_variant_type,
     hwe,
 )
+from grapp.util.exceptions import UserInputError
+from grapp.cli.util import load_immutable
 from typing import Set
 import argparse
 import os
@@ -202,7 +203,7 @@ def run(args):
             brange = (0, 0)
         else:
             brange = args.range
-        grg = pygrgl.load_immutable_grg(args.grg_input, load_up_edges=False)
+        grg = load_immutable(args.grg_input, load_up_edges=False)
         counts = None
         freqs = None
         if args.min_ac is not None or args.max_ac is not None:

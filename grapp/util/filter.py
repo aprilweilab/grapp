@@ -8,7 +8,8 @@ from collections import defaultdict
 import os
 import pygrgl
 
-from grapp.util.simple import UserInputError, allele_frequencies
+from grapp.util.simple import allele_frequencies
+from grapp.util.exceptions import UserInputError
 
 
 def grg_save_individuals(

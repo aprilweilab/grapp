@@ -1,5 +1,9 @@
 from grapp.linalg.ops_scipy import SciPyStdXOperator, SciPyXOperator
 from grapp.util.simple import allele_counts, _GenotypeDist, common_mut_dataframe
+from grapp.grg_calculator import (
+    GRGCalcInterface as _GRGCalcInterface,
+    _wrap_grg,
+)
 from scipy.stats import t as t_distribution
 from typing import List, Optional, Union
 import itertools
@@ -103,7 +107,7 @@ def read_pheno(filename: str, verbose: bool = True) -> numpy.typing.NDArray:
 
 
 def _computeDiagXTX(
-    grg: pygrgl.GRG,
+    grg: _GRGCalcInterface,
     dist: str,
     acount: numpy.typing.NDArray,
     n_j: numpy.typing.NDArray,
@@ -118,8 +122,7 @@ def _computeDiagXTX(
         # diag(X^T @ X): for the non-standardized genotype matrix, GRG has a special initialization
         # method "xtx" which uses coalescence information to compute the diagonal in a single pass
         if dist == _GenotypeDist.SAMPLE.value:
-            XX = pygrgl.matmul(
-                grg,
+            XX = grg.matmul(
                 numpy.ones((1, grg.num_samples), dtype=numpy.int32),
                 pygrgl.TraversalDirection.UP,
                 init="xtx",
@@ -139,7 +142,7 @@ def _computeDiagXTX(
 
 
 def linear_assoc_no_covar(
-    grg: pygrgl.GRG,
+    grg: Union[pygrgl.GRG, _GRGCalcInterface],
     Y: numpy.typing.NDArray,
     only_beta: bool = False,
     standardize: bool = False,
@@ -177,6 +180,7 @@ def linear_assoc_no_covar(
     # Remove the missing individuals from the Y matrix.
     if any(y_miss):
         Y = Y[non_missing_indivs]
+    grg = _wrap_grg(grg)
 
     acount, miss_count = allele_counts(
         grg,
@@ -254,7 +258,7 @@ def linear_assoc_no_covar(
 
 
 def linear_assoc_covar(
-    grg: pygrgl.GRG,
+    grg: Union[pygrgl.GRG, _GRGCalcInterface],
     Y: numpy.typing.NDArray,
     C: numpy.typing.NDArray,
     only_beta: bool = False,
@@ -320,6 +324,8 @@ def linear_assoc_covar(
             dist=dist,
             standardize=standardize,
         )
+
+    grg = _wrap_grg(grg)
 
     # QR decompose the covariate matrix after adding an intercept column.
     C_intercept = numpy.hstack([numpy.ones((C.shape[0], 1)), C])

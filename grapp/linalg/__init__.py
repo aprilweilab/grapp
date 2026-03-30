@@ -15,6 +15,7 @@ from scipy.sparse.linalg import eigsh
 from typing import Tuple, List, Dict, Any, Union, Optional
 
 from grapp.util import allele_frequencies as _allele_frequencies
+from grapp.grg_calculator import GRGCalcInterface as _GRGCalcInterface
 
 # Everything below is imported so that users can import them via grapp.linalg
 from grapp.linalg.ops_scipy import (  # noqa: F401
@@ -37,7 +38,7 @@ class MatrixSelection(Enum):
     XTX = 3  # The MxM covariance or correlation matrix
 
 
-def _random_window_filter(grg: pygrgl.GRG, sample_window: int):
+def _random_window_filter(grg: _GRGCalcInterface, sample_window: int):
     # Create a mask for random mutation subset based on input argument.
     mutation_filter = []
     if sample_window > 1:
@@ -80,7 +81,7 @@ def sort_by_eigvalues(
 
 def eigs(
     matrix: MatrixSelection,
-    grg: pygrgl.GRG,
+    grg: Union[pygrgl.GRG, _GRGCalcInterface],
     k: int,
     standardized: bool = True,
     haploid: bool = False,
@@ -150,7 +151,9 @@ def eigs(
 
 
 def get_eig_pcs(
-    grgs: Union[pygrgl.GRG, List[pygrgl.GRG]],
+    grgs: Union[
+        pygrgl.GRG, List[pygrgl.GRG], _GRGCalcInterface, List[_GRGCalcInterface]
+    ],
     k: int,
     op_kwargs: Dict[str, Any] = {},
     threads: int = 1,
@@ -232,7 +235,9 @@ def get_eig_pcs(
 
 
 def PCs(
-    grgs: Union[pygrgl.GRG, List[pygrgl.GRG]],
+    grgs: Union[
+        pygrgl.GRG, List[pygrgl.GRG], _GRGCalcInterface, List[_GRGCalcInterface]
+    ],
     k: int,
     include_eig: bool = False,
     use_pro_pca: bool = False,

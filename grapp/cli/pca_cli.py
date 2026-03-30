@@ -2,10 +2,10 @@ from grapp.linalg import (
     PCs,
 )
 from grapp.cli.util import pandas_to_tsv
+from grapp.grg_calculator import load_grg_calculator
 import argparse
 import numpy
 import os
-import pygrgl
 
 
 def add_options(subparser):
@@ -51,9 +51,7 @@ def add_options(subparser):
 
 
 def run(args):
-    grg_list = [
-        pygrgl.load_immutable_grg(gf, load_up_edges=False) for gf in args.grg_input
-    ]
+    grg_list = [load_grg_calculator(gf) for gf in args.grg_input]
     scores = PCs(
         grg_list,
         k=args.dimensions,

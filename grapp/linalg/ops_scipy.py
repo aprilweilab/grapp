@@ -5,7 +5,10 @@ Linear operators that are compatible with scipy.
 from scipy.sparse.linalg import LinearOperator
 from pygrgl import TraversalDirection
 from typing import Tuple, Union, List, Optional
-import concurrent.futures
+from grapp.grg_calculator import (
+    GRGCalcInterface as _GRGCalcInterface,
+    _wrap_grg,
+)
 import numpy
 import pygrgl
 
@@ -30,7 +33,7 @@ def _transpose_shape(shape: Tuple[int, int]) -> Tuple[int, int]:
 class GRGOpFilter:
     def __init__(
         self,
-        grg: pygrgl.GRG,
+        grg: _GRGCalcInterface,
         haploid: bool,
         mutation_filter: Optional[Union[List[int], numpy.typing.NDArray]],
         sample_filter: Optional[Union[List[int], numpy.typing.NDArray]],
@@ -93,6 +96,10 @@ class GRGOpFilter:
         return output_matrix
 
 
+# General type for GRG objects.
+GRGType = Union[pygrgl.GRG, _GRGCalcInterface]
+
+
 class SciPyXOperator(LinearOperator):
     """
     A scipy.sparse.linalg.LinearOperator on the genotype matrix represented by the GRG, which allows for
@@ -125,7 +132,7 @@ class SciPyXOperator(LinearOperator):
 
     def __init__(
         self,
-        grg: pygrgl.GRG,
+        grg: GRGType,
         direction: TraversalDirection,
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
@@ -135,7 +142,7 @@ class SciPyXOperator(LinearOperator):
     ):
         self.filter = GRGOpFilter(grg, haploid, mutation_filter, sample_filter)
         self.haploid = haploid
-        self.grg = grg
+        self.grg = _wrap_grg(grg)
         self.direction = direction
         assert (
             miss_values is None or miss_values.ndim == 1
@@ -162,8 +169,7 @@ class SciPyXOperator(LinearOperator):
                 M = numpy.zeros((A.shape[0], self.grg.num_mutations))
             kwargs["miss"] = M
 
-        result = pygrgl.matmul(
-            self.grg,
+        result = self.grg.matmul(
             A,
             mult_dir,
             by_individual=not self.haploid,
@@ -224,7 +230,7 @@ class SciPyXTXOperator(LinearOperator):
 
     def __init__(
         self,
-        grg: pygrgl.GRG,
+        grg: GRGType,
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
         miss_values: Optional[numpy.typing.NDArray] = None,
@@ -290,7 +296,7 @@ class SciPyXXTOperator(LinearOperator):
 
     def __init__(
         self,
-        grg: pygrgl.GRG,
+        grg: GRGType,
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
         miss_values: Optional[numpy.typing.NDArray] = None,
@@ -348,7 +354,7 @@ class _SciPyStandardizedOperator(LinearOperator):
 
     def __init__(
         self,
-        grg: pygrgl.GRG,
+        grg: GRGType,
         freqs: numpy.typing.NDArray,
         shape: Tuple[int, int],
         dtype: TypeAlias = numpy.float64,
@@ -357,7 +363,7 @@ class _SciPyStandardizedOperator(LinearOperator):
         custom_variance: Optional[numpy.typing.NDArray] = None,
     ):
         self.haploid = haploid
-        self.grg = grg
+        self.grg = _wrap_grg(grg)
         self.freqs = freqs
         self.mult_const = 1 if self.haploid else grg.ploidy
 
@@ -423,7 +429,7 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
 
     def __init__(
         self,
-        grg: pygrgl.GRG,
+        grg: GRGType,
         direction: pygrgl.TraversalDirection,
         freqs: numpy.typing.NDArray,
         dtype: TypeAlias = numpy.float64,
@@ -456,8 +462,7 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
                     self.filter.prep_input(other_matrix.T, mult_dir)
                     * self.inverse_sigma
                 )
-                XvS = pygrgl.matmul(
-                    self.grg,
+                XvS = self.grg.matmul(
                     vS,
                     mult_dir,
                     by_individual=not self.haploid,
@@ -470,8 +475,7 @@ class SciPyStdXOperator(_SciPyStandardizedOperator):
                 assert direction == _DOWN
                 m = self.filter.prep_input(other_matrix.T, mult_dir)
                 SXv = (
-                    pygrgl.matmul(
-                        self.grg,
+                    self.grg.matmul(
                         m,
                         mult_dir,
                         by_individual=not self.haploid,
@@ -545,7 +549,7 @@ class SciPyStdXTXOperator(LinearOperator):
 
     def __init__(
         self,
-        grg: pygrgl.GRG,
+        grg: GRGType,
         freqs: numpy.typing.NDArray,
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
@@ -627,7 +631,7 @@ class SciPyStdXXTOperator(LinearOperator):
 
     def __init__(
         self,
-        grg: pygrgl.GRG,
+        grg: GRGType,
         freqs: numpy.typing.NDArray,
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
@@ -707,7 +711,7 @@ class MultiSciPyXOperator(LinearOperator):
 
     def __init__(
         self,
-        grgs: List[pygrgl.GRG],
+        grgs: List[GRGType],
         direction: pygrgl.TraversalDirection,
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
@@ -770,7 +774,7 @@ class MultiSciPyXOperator(LinearOperator):
             prev_max_mut += g.num_mutations
         # Should we concatenate the result for _matmat, or add them together?
         self.concat = self.direction == pygrgl.TraversalDirection.DOWN
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
+        self.scheduler = _wrap_grg(grgs[0]).make_scheduler(grgs, threads)
         shape = (self.operators[0].shape[0], self.num_mutations)
         if direction == _UP:
             shape = (
@@ -795,7 +799,7 @@ class MultiSciPyXOperator(LinearOperator):
                 end = start + op.shape[1]
                 assert end <= other_matrix.shape[0]
                 sub_matrix = other_matrix[start:end, :]
-                futures.append(self.executor.submit(op_method, op, sub_matrix))
+                futures.append(self.scheduler.submit(op.grg, op_method, op, sub_matrix))
                 start = end
             result = None
             for future in futures:
@@ -807,7 +811,9 @@ class MultiSciPyXOperator(LinearOperator):
         # For DOWN, we have "(M x N) x (N x k)", so it is much simpler (no splitting)
         else:
             for op in self.operators:
-                futures.append(self.executor.submit(op_method, op, other_matrix))
+                futures.append(
+                    self.scheduler.submit(op.grg, op_method, op, other_matrix)
+                )
             result = [f.result() for f in futures]
             return numpy.concatenate(result)
 
@@ -866,7 +872,7 @@ class MultiSciPyXTXOperator(LinearOperator):
 
     def __init__(
         self,
-        grgs: List[pygrgl.GRG],
+        grgs: List[GRGType],
         dtype=numpy.float64,
         haploid: bool = False,
         miss_values: Optional[numpy.typing.NDArray] = None,
@@ -948,7 +954,7 @@ class MultiSciPyStdXOperator(LinearOperator):
 
     def __init__(
         self,
-        grgs: List[pygrgl.GRG],
+        grgs: List[GRGType],
         direction: pygrgl.TraversalDirection,
         freqs: List[numpy.typing.NDArray],
         dtype: TypeAlias = numpy.float64,
@@ -1005,7 +1011,7 @@ class MultiSciPyStdXOperator(LinearOperator):
             prev_max_mut += g.num_mutations
         # Should we concatenate the result for _matmat, or add them together?
         self.concat = self.direction == pygrgl.TraversalDirection.DOWN
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
+        self.scheduler = _wrap_grg(grgs[0]).make_scheduler(grgs, threads)
         sample_count = num_samples if haploid else num_indivs
         shape = (sample_count, self.num_mutations)
         if direction == _DOWN:
@@ -1022,7 +1028,7 @@ class MultiSciPyStdXOperator(LinearOperator):
                 end = start + op.shape[1]
                 assert end <= other_matrix.shape[0]
                 sub_matrix = other_matrix[start:end, :]
-                futures.append(self.executor.submit(op_method, op, sub_matrix))
+                futures.append(self.scheduler.submit(op.grg, op_method, op, sub_matrix))
                 start = end
             result = None
             for future in futures:
@@ -1034,7 +1040,9 @@ class MultiSciPyStdXOperator(LinearOperator):
         # For DOWN, we have "(M x N) x (N x k)", so it is much simpler (no splitting)
         else:
             for op in self.operators:
-                futures.append(self.executor.submit(op_method, op, other_matrix))
+                futures.append(
+                    self.scheduler.submit(op.grg, op_method, op, other_matrix)
+                )
             result = [f.result() for f in futures]
             return numpy.concatenate(result)
 
@@ -1099,7 +1107,7 @@ class MultiSciPyStdXTXOperator(LinearOperator):
 
     def __init__(
         self,
-        grgs: List[pygrgl.GRG],
+        grgs: List[GRGType],
         freqs: List[numpy.typing.NDArray],
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,
@@ -1182,7 +1190,7 @@ class MultiSciPyStdXXTOperator(LinearOperator):
 
     def __init__(
         self,
-        grgs: List[pygrgl.GRG],
+        grgs: List[GRGType],
         freqs: List[numpy.typing.NDArray],
         dtype: TypeAlias = numpy.float64,
         haploid: bool = False,

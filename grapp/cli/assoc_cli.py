@@ -5,13 +5,13 @@ from grapp.assoc import (
     linear_assoc_no_covar,
 )
 from grapp.cli.util import pandas_to_tsv
+from grapp.grg_calculator import load_grg_calculator, GRGCalcInterface
 from typing import Optional
 import argparse
 import concurrent.futures
 import numpy
 import os
 import pandas
-import pygrgl
 
 
 def add_options(subparser):
@@ -63,7 +63,7 @@ def add_options(subparser):
 
 
 def do_single_gwas(
-    grg: pygrgl.GRG,
+    grg: GRGCalcInterface,
     y: numpy.typing.NDArray,
     C: Optional[numpy.typing.NDArray],
     method: Optional[str],
@@ -82,7 +82,7 @@ def do_single_gwas(
 
 
 def run(args):
-    grgs = [pygrgl.load_immutable_grg(g, load_up_edges=False) for g in args.grg_input]
+    grgs = [load_grg_calculator(g) for g in args.grg_input]
     if args.phenotypes is None:
         print("No phenotype provided; randomly generating phenotype values")
         y = numpy.random.standard_normal(grgs[0].num_individuals)
