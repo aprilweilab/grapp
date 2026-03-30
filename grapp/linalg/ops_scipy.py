@@ -9,7 +9,6 @@ from grapp.grg_calculator import (
     GRGCalcInterface as _GRGCalcInterface,
     _wrap_grg,
 )
-import concurrent.futures
 import numpy
 import pygrgl
 
@@ -775,7 +774,7 @@ class MultiSciPyXOperator(LinearOperator):
             prev_max_mut += g.num_mutations
         # Should we concatenate the result for _matmat, or add them together?
         self.concat = self.direction == pygrgl.TraversalDirection.DOWN
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
+        self.scheduler = _wrap_grg(grgs[0]).make_scheduler(grgs, threads)
         shape = (self.operators[0].shape[0], self.num_mutations)
         if direction == _UP:
             shape = (
@@ -800,7 +799,7 @@ class MultiSciPyXOperator(LinearOperator):
                 end = start + op.shape[1]
                 assert end <= other_matrix.shape[0]
                 sub_matrix = other_matrix[start:end, :]
-                futures.append(self.executor.submit(op_method, op, sub_matrix))
+                futures.append(self.scheduler.submit(op.grg, op_method, op, sub_matrix))
                 start = end
             result = None
             for future in futures:
@@ -812,7 +811,9 @@ class MultiSciPyXOperator(LinearOperator):
         # For DOWN, we have "(M x N) x (N x k)", so it is much simpler (no splitting)
         else:
             for op in self.operators:
-                futures.append(self.executor.submit(op_method, op, other_matrix))
+                futures.append(
+                    self.scheduler.submit(op.grg, op_method, op, other_matrix)
+                )
             result = [f.result() for f in futures]
             return numpy.concatenate(result)
 
@@ -1010,7 +1011,7 @@ class MultiSciPyStdXOperator(LinearOperator):
             prev_max_mut += g.num_mutations
         # Should we concatenate the result for _matmat, or add them together?
         self.concat = self.direction == pygrgl.TraversalDirection.DOWN
-        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=threads)
+        self.scheduler = _wrap_grg(grgs[0]).make_scheduler(grgs, threads)
         sample_count = num_samples if haploid else num_indivs
         shape = (sample_count, self.num_mutations)
         if direction == _DOWN:
@@ -1027,7 +1028,7 @@ class MultiSciPyStdXOperator(LinearOperator):
                 end = start + op.shape[1]
                 assert end <= other_matrix.shape[0]
                 sub_matrix = other_matrix[start:end, :]
-                futures.append(self.executor.submit(op_method, op, sub_matrix))
+                futures.append(self.scheduler.submit(op.grg, op_method, op, sub_matrix))
                 start = end
             result = None
             for future in futures:
@@ -1039,7 +1040,9 @@ class MultiSciPyStdXOperator(LinearOperator):
         # For DOWN, we have "(M x N) x (N x k)", so it is much simpler (no splitting)
         else:
             for op in self.operators:
-                futures.append(self.executor.submit(op_method, op, other_matrix))
+                futures.append(
+                    self.scheduler.submit(op.grg, op_method, op, other_matrix)
+                )
             result = [f.result() for f in futures]
             return numpy.concatenate(result)
 
