@@ -1,4 +1,5 @@
 from grapp.util.simple import allele_frequencies
+from grapp.grg_calculator import GRGCalculator, _wrap_grg_spmv
 from typing import Optional, List
 import glob
 import itertools
@@ -7,6 +8,15 @@ import os
 import pygrgl
 import shutil
 import subprocess
+
+try:
+    import pygrgl_spmv as _pygrgl_spmv
+except ImportError:
+    _pygrgl_spmv = None
+
+WRAP_GRG_PARAMS = [(lambda g: g,), (GRGCalculator,)]
+if _pygrgl_spmv is not None:
+    WRAP_GRG_PARAMS.append((_wrap_grg_spmv,))
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 INPUT_DIR = os.path.join(THIS_DIR, "input")

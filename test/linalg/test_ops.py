@@ -11,7 +11,6 @@ from grapp.linalg.ops_scipy import (
 )
 from grapp.util import allele_frequencies
 from grapp.util.filter import grg_save_samples
-from grapp.grg_calculator import GRGCalculator, _wrap_grg_spmv
 from parameterized import parameterized
 import numpy
 import os
@@ -27,6 +26,7 @@ from testing_utils import (
     grg2X,
     split_and_load,
     complete_sample_sets,
+    WRAP_GRG_PARAMS,
 )
 
 CLEANUP = True
@@ -44,13 +44,7 @@ class TestLinearOperators(unittest.TestCase):
 
         numpy.random.seed(42)
 
-    @parameterized.expand(
-        [
-            (lambda g: g,),
-            (GRGCalculator,),
-            (_wrap_grg_spmv,),
-        ]
-    )
+    @parameterized.expand(WRAP_GRG_PARAMS)
     def test_simple_op(self, wrap_grg):
         """
         The simple operator works on the genotype matrix without any modification. In this case,
@@ -75,13 +69,7 @@ class TestLinearOperators(unittest.TestCase):
         grg_hap_result = grg_hap_op._matmat(random_input)
         numpy.testing.assert_allclose(grg_hap_result, numpy_hap_result)
 
-    @parameterized.expand(
-        [
-            (lambda g: g,),
-            (GRGCalculator,),
-            (_wrap_grg_spmv,),
-        ]
-    )
+    @parameterized.expand(WRAP_GRG_PARAMS)
     def test_XXT(self, wrap_grg):
         K = 20  # Use 20 random vectors for test.
         random_input = numpy.random.standard_normal((K, self.grg.num_samples)).T
@@ -100,13 +88,7 @@ class TestLinearOperators(unittest.TestCase):
         grg_dip_result = grg_dip_op._matmat(random_input)
         numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
 
-    @parameterized.expand(
-        [
-            (lambda g: g,),
-            (GRGCalculator,),
-            (_wrap_grg_spmv,),
-        ]
-    )
+    @parameterized.expand(WRAP_GRG_PARAMS)
     def test_standardized_op_X(self, wrap_grg):
         K = 20  # Use 20 random vectors for test.
         random_input = numpy.random.standard_normal((K, self.grg.num_mutations)).T
@@ -127,13 +109,7 @@ class TestLinearOperators(unittest.TestCase):
         self.assertFalse(numpy.any(numpy.isnan(numpy_result)))
         numpy.testing.assert_allclose(grg_result, numpy_result, atol=ABSOLUTE_TOLERANCE)
 
-    @parameterized.expand(
-        [
-            (lambda g: g,),
-            (GRGCalculator,),
-            (_wrap_grg_spmv,),
-        ]
-    )
+    @parameterized.expand(WRAP_GRG_PARAMS)
     def test_standardized_op_XT(self, wrap_grg):
         K = 20  # Use 20 random vectors for test.
         random_input = numpy.random.standard_normal((K, self.grg.num_individuals)).T
@@ -160,13 +136,7 @@ class TestLinearOperators(unittest.TestCase):
         alpha2_result = grg_alpha2_op._matmat(random_input)
         self.assertFalse(numpy.allclose(grg_result, alpha2_result))
 
-    @parameterized.expand(
-        [
-            (lambda g: g,),
-            (GRGCalculator,),
-            (_wrap_grg_spmv,),
-        ]
-    )
+    @parameterized.expand(WRAP_GRG_PARAMS)
     def test_standardized_op_XtX(self, wrap_grg):
         K = 20  # Number of random vectors for test.
         random_input = numpy.random.standard_normal((K, self.grg.num_mutations)).T
@@ -203,13 +173,7 @@ class TestLinearOperators(unittest.TestCase):
         alpha2_result = grg_alpha2_op._rmatmat(random_input)
         self.assertFalse(numpy.allclose(grg_result, alpha2_result))
 
-    @parameterized.expand(
-        [
-            (lambda g: g,),
-            (GRGCalculator,),
-            (_wrap_grg_spmv,),
-        ]
-    )
+    @parameterized.expand(WRAP_GRG_PARAMS)
     def test_multi_ops(self, wrap_grg):
         """
         Test that the operators that work with multiple GRGs produce the same result
@@ -476,13 +440,7 @@ class TestLinearOperators(unittest.TestCase):
         grg_dip_result = grg_op._matmat(random_sampvals)
         numpy.testing.assert_allclose(grg_dip_result, numpy_dip_result)
 
-    @parameterized.expand(
-        [
-            (lambda g: g,),
-            (GRGCalculator,),
-            (_wrap_grg_spmv,),
-        ]
-    )
+    @parameterized.expand(WRAP_GRG_PARAMS)
     def test_missing(self, wrap_grg):
         # Properties of the input data.
         MISSING_INDIVS = 21

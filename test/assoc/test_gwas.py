@@ -8,12 +8,11 @@ import tempfile
 import unittest
 from grapp.assoc import linear_assoc_no_covar, linear_assoc_covar, read_pheno
 from grapp.util.filter import grg_save_samples
-from grapp.grg_calculator import GRGCalculator, _wrap_grg_spmv
 from parameterized import parameterized
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(THIS_DIR, ".."))
-from testing_utils import construct_grg, complete_sample_sets
+from testing_utils import construct_grg, complete_sample_sets, WRAP_GRG_PARAMS
 
 CLEANUP = True
 INPUT_DIR = os.path.join(THIS_DIR, "input")
@@ -38,13 +37,7 @@ class TestGWAS(unittest.TestCase):
         pcs_baseline_path = os.path.join(INPUT_DIR, "test.10pcs.tsv")
         cls.PCs = pd.read_csv(pcs_baseline_path, delimiter="\t")
 
-    @parameterized.expand(
-        [
-            (lambda g: g,),
-            (GRGCalculator,),
-            (_wrap_grg_spmv,),
-        ]
-    )
+    @parameterized.expand(WRAP_GRG_PARAMS)
     def test_gwas_no_covar_vs_baseline(self, wrap_grg):
         grg = wrap_grg(self.grg)
         df_py = linear_assoc_no_covar(grg, self.Y)
@@ -80,13 +73,7 @@ class TestGWAS(unittest.TestCase):
                 assert not math.isnan(val_py), fail_msg
                 assert diff <= atol or rel_err <= rtol, fail_msg
 
-    @parameterized.expand(
-        [
-            (lambda g: g,),
-            (GRGCalculator,),
-            (_wrap_grg_spmv,),
-        ]
-    )
+    @parameterized.expand(WRAP_GRG_PARAMS)
     def test_gwas_covar(self, wrap_grg):
         grg = wrap_grg(self.grg)
         C = self.PCs.to_numpy()
@@ -130,13 +117,7 @@ class TestGWAS(unittest.TestCase):
         self.assertEqual(len(df_nonstd), len(df_std))
         self.assertEqual(self.grg.num_mutations, len(df_std))
 
-    @parameterized.expand(
-        [
-            (lambda g: g,),
-            (GRGCalculator,),
-            (_wrap_grg_spmv,),
-        ]
-    )
+    @parameterized.expand(WRAP_GRG_PARAMS)
     def test_gwas_no_covar_dists(self, wrap_grg):
         """
         The binomial method and the sample method should be very similar on neutral simulated data
@@ -159,13 +140,7 @@ class TestGWAS(unittest.TestCase):
             small_err_proportion, 0.99
         )  # 99% of errors are less than 20% relative error
 
-    @parameterized.expand(
-        [
-            (lambda g: g,),
-            (GRGCalculator,),
-            (_wrap_grg_spmv,),
-        ]
-    )
+    @parameterized.expand(WRAP_GRG_PARAMS)
     def test_gwas_no_covar_missing_Y(self, wrap_grg):
         """
         When there are missing phenotypes (Y), they are represented as NaN. In this case, we need to scale
@@ -272,13 +247,7 @@ class TestGWAS(unittest.TestCase):
 
     # Test a bunch of extra scenarios with covariates: uncentered phenotypes, non-standardized phenotypes,
     # PCs as covariates, a binary covariate, etc.
-    @parameterized.expand(
-        [
-            (lambda g: g,),
-            (GRGCalculator,),
-            (_wrap_grg_spmv,),
-        ]
-    )
+    @parameterized.expand(WRAP_GRG_PARAMS)
     def test_gwas_covar_extra(self, wrap_grg):
         # These covariates should change nothing about the GWAS
         # XXX this one is too numerically unstable between different environments.
