@@ -101,6 +101,19 @@ class GRGCalcInterface(ABC):
         pass
 
 
+class GRGSeqOp(GRGWaitable):
+    def __init__(self, value):
+        self._value = value
+
+    def result(self) -> Any:
+        return self._value
+
+
+class GRGSeqSched(GRGScheduler):
+    def submit(self, grg: GRGCalcInterface, operation, *args, **kwargs) -> GRGWaitable:
+        return GRGSeqOp(operation(*args, **kwargs))
+
+
 class GRGThreadOp(GRGWaitable):
     def __init__(self, future: concurrent.futures.Future):
         self.future = future
@@ -258,7 +271,7 @@ class GRGSpMVCalculator(GRGCalcInterface):
         )
 
     def make_scheduler(self, grgs: List["GRGCalcInterface"], workers: int = 1):
-        raise NotImplementedError("Not yet implemented")
+        return GRGSeqSched()
 
 
 def load_grg_calculator(filename: str) -> GRGCalcInterface:
