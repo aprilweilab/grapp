@@ -182,7 +182,12 @@ class TestLinearOperators(unittest.TestCase):
 
         # Split the graph and get the multiple GRGs, for testing all of the below.
         test_dir = "test.multi_ops.split"
-        grgs = [wrap_grg(g) for g in split_and_load(self.grg_filename, test_dir, 1_000_000, JOBS, CLEANUP)]
+        grgs = [
+            wrap_grg(g)
+            for g in split_and_load(
+                self.grg_filename, test_dir, 1_000_000, JOBS, CLEANUP
+            )
+        ]
         grg = wrap_grg(self.grg)
 
         #### Direction == UP

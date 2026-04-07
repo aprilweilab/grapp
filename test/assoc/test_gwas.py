@@ -92,9 +92,7 @@ class TestGWAS(unittest.TestCase):
                 base_column,
                 err_msg=f"Failed on column: {column}",
             )
-        df_nonstd_regress = linear_assoc_covar(
-            grg, self.Y, C, method="regress"
-        )
+        df_nonstd_regress = linear_assoc_covar(grg, self.Y, C, method="regress")
 
         qr_nans = df_nonstd["BETA"].isna().sum()
         reg_nans = df_nonstd_regress["BETA"].isna().sum()
@@ -166,12 +164,8 @@ class TestGWAS(unittest.TestCase):
         grg = wrap_grg(self.grg)
 
         # Use binomial estimates
-        true_sample_df = linear_assoc_no_covar(
-            wrapped_filt, Y_kept, dist="binomial"
-        )
-        mask_sample_df = linear_assoc_no_covar(
-            grg, Y_miss, dist="binomial"
-        )
+        true_sample_df = linear_assoc_no_covar(wrapped_filt, Y_kept, dist="binomial")
+        mask_sample_df = linear_assoc_no_covar(grg, Y_miss, dist="binomial")
         true_nans = true_sample_df["BETA"].isna().sum()
         mask_nans = mask_sample_df["BETA"].isna().sum()
         self.assertEqual(true_nans, mask_nans)
