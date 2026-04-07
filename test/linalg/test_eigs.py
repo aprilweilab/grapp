@@ -5,7 +5,7 @@ from grapp.linalg import (
     get_pcs_propca,
     sort_by_eigvalues,
 )
-from grapp.grg_calculator import GRGCalculator
+from grapp.grg_calculator import GRGCalculator, _wrap_grg_spmv
 from parameterized import parameterized
 import pygrgl
 import numpy
@@ -36,6 +36,7 @@ class TestPCA(unittest.TestCase):
         [
             (lambda g: g,),
             (GRGCalculator,),
+            (_wrap_grg_spmv,),
         ]
     )
     def test_eigvals(self, wrap_grg):
@@ -62,6 +63,7 @@ class TestPCA(unittest.TestCase):
         [
             (lambda g: g,),
             (GRGCalculator,),
+            (_wrap_grg_spmv,),
         ]
     )
     def test_pca_smoketest(self, wrap_grg):
@@ -77,6 +79,7 @@ class TestPCA(unittest.TestCase):
         [
             (lambda g: g,),
             (GRGCalculator,),
+            (_wrap_grg_spmv,),
         ]
     )
     def test_propca_smoketest(self, wrap_grg):
