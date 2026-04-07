@@ -1,6 +1,6 @@
 from grapp.util.simple import allele_frequencies
-from grapp.grg_calculator import GRGCalculator, _wrap_grg_spmv
-from typing import Optional, List
+from grapp.grg_calculator import GRGCalculator, GRGCalcInterface, GRGSpMVCalculator
+from typing import Optional, List, Union
 import glob
 import itertools
 import numpy
@@ -13,10 +13,6 @@ try:
     import pygrgl_spmv as _pygrgl_spmv
 except ImportError:
     _pygrgl_spmv = None
-
-WRAP_GRG_PARAMS = [(lambda g: g,), (GRGCalculator,)]
-if _pygrgl_spmv is not None:
-    WRAP_GRG_PARAMS.append((_wrap_grg_spmv,))
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 INPUT_DIR = os.path.join(THIS_DIR, "input")
@@ -161,3 +157,35 @@ def complete_sample_sets(grg, ignore_indivs):
     ignore_samples = [i for i in range(grg.num_samples) if i not in keep_samples]
     assert set(keep_samples) | set(ignore_samples) == set(range(grg.num_samples))
     return keep_indivs, ignore_indivs, keep_samples, ignore_samples
+
+def _wrap_grg_spmv(grg: Union[pygrgl.GRG, GRGCalcInterface]) -> GRGCalcInterface:
+    _SPMV_ENV = "PYGRGL_SPMV_CONFIG"
+    config_path = os.environ.get(_SPMV_ENV)
+    if config_path is None:
+        print(
+            f"[_wrap_grg_spmv] Environment variable {_SPMV_ENV!r} is NOT set.\n"
+            f"  pygrgl_spmv.load() will attempt to select a default backend "
+            f"(MKL preferred, cuSPARSE fallback) and emit a UserWarning.\n"
+            f"  To silence this warning and control the backend, set {_SPMV_ENV} "
+            f"to the path of a JSON config file."
+        )
+    else:
+        print(f"[_wrap_grg_spmv] Environment variable {_SPMV_ENV!r} is set to: {config_path!r}")
+
+    if isinstance(grg, GRGCalcInterface):
+        print(f"[_wrap_grg_spmv] Input is already a GRGCalcInterface ({type(grg).__name__}); returning as-is.")
+        return grg
+
+    if _pygrgl_spmv is None:
+        raise ImportError(
+            "pygrgl_spmv is not installed; cannot use _wrap_grg_spmv. "
+            "Install the grg-spmv package or use _wrap_grg instead."
+        )
+    print(f"[_wrap_grg_spmv] Loading GRG object ({type(grg).__name__}) via pygrgl_spmv.load() ...")
+    spmv_op = _pygrgl_spmv.load(grg)
+    print(f"[_wrap_grg_spmv] Load complete. Wrapping in GRGSpMVCalculator.")
+    return GRGSpMVCalculator(spmv_op)
+
+WRAP_GRG_PARAMS = [(lambda g: g,), (GRGCalculator,)]
+if _pygrgl_spmv is not None:
+    WRAP_GRG_PARAMS.append((_wrap_grg_spmv,))

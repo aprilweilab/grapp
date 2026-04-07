@@ -1,5 +1,4 @@
 from abc import ABC, abstractmethod
-import os
 import pygrgl
 import numpy
 import concurrent.futures
@@ -305,31 +304,3 @@ def _wrap_grg(grg: Union[pygrgl.GRG, GRGCalcInterface]) -> GRGCalcInterface:
         return GRGCalculator(grg)
     assert isinstance(grg, GRGCalcInterface)
     return grg
-
-def _wrap_grg_spmv(grg: Union[pygrgl.GRG, GRGCalcInterface]) -> GRGCalcInterface:
-    _SPMV_ENV = "PYGRGL_SPMV_CONFIG"
-    config_path = os.environ.get(_SPMV_ENV)
-    if config_path is None:
-        print(
-            f"[_wrap_grg_spmv] Environment variable {_SPMV_ENV!r} is NOT set.\n"
-            f"  pygrgl_spmv.load() will attempt to select a default backend "
-            f"(MKL preferred, cuSPARSE fallback) and emit a UserWarning.\n"
-            f"  To silence this warning and control the backend, set {_SPMV_ENV} "
-            f"to the path of a JSON config file."
-        )
-    else:
-        print(f"[_wrap_grg_spmv] Environment variable {_SPMV_ENV!r} is set to: {config_path!r}")
-
-    if isinstance(grg, GRGCalcInterface):
-        print(f"[_wrap_grg_spmv] Input is already a GRGCalcInterface ({type(grg).__name__}); returning as-is.")
-        return grg
-
-    if pygrgl_spmv is None:
-        raise ImportError(
-            "pygrgl_spmv is not installed; cannot use _wrap_grg_spmv. "
-            "Install the grg-spmv package or use _wrap_grg instead."
-        )
-    print(f"[_wrap_grg_spmv] Loading GRG object ({type(grg).__name__}) via pygrgl_spmv.load() ...")
-    spmv_op = pygrgl_spmv.load(grg)
-    print(f"[_wrap_grg_spmv] Load complete. Wrapping in GRGSpMVCalculator.")
-    return GRGSpMVCalculator(spmv_op)
