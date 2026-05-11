@@ -1,5 +1,6 @@
 from grapp.linalg.ops_scipy import SciPyStdXOperator, SciPyXOperator
 from grapp.util.simple import allele_counts, _GenotypeDist, common_mut_dataframe
+from grapp.util.exceptions import UserInputError
 from grapp.grg_calculator import (
     GRGCalcInterface as _GRGCalcInterface,
     _wrap_grg,
@@ -115,6 +116,11 @@ def _computeDiagXTX(
     standardize: bool,
     sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
 ):
+    if not grg.has_individual_coals:
+        raise UserInputError(
+            "GRG does not have individual coalescences; try using the binomial approximation for variance"
+        )
+
     # diag(X^T @ X): for any standardized matrix with N rows, the diagonal will just be N
     if standardize:
         XX = n_j

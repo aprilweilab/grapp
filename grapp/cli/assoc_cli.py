@@ -6,6 +6,7 @@ from grapp.assoc import (
 )
 from grapp.cli.util import pandas_to_tsv
 from grapp.grg_calculator import load_grg_calculator, GRGCalcInterface
+from grapp.util.exceptions import UserInputError
 from typing import Optional
 import argparse
 import concurrent.futures
@@ -70,6 +71,11 @@ def do_single_gwas(
     standardize: bool,
     binomial: bool,
 ):
+    if not binomial and not grg.has_individual_coals:
+        raise UserInputError(
+            "GRG does not have individual coalescences; try --binomial to approximate the variance"
+        )
+
     dist = "binomial" if binomial else "sample"
     if C is not None:
         assert method is not None
