@@ -80,6 +80,11 @@ class GRGCalcInterface(ABC):
     def has_missing_data(self) -> bool:
         pass
 
+    @property
+    @abstractmethod
+    def has_individual_coals(self) -> bool:
+        pass
+
     @abstractmethod
     def get_mutation_by_id(self, id: int) -> pygrgl.Mutation:
         pass
@@ -175,6 +180,10 @@ class GRGCalculator(GRGCalcInterface):
     def has_missing_data(self) -> bool:
         return self.grg.has_missing_data
 
+    @property
+    def has_individual_coals(self) -> bool:
+        return self.grg.has_individual_coals
+
     def get_mutation_by_id(self, id: int) -> pygrgl.Mutation:
         return self.grg.get_mutation_by_id(id)
 
@@ -241,6 +250,10 @@ class GRGSpMVCalculator(GRGCalcInterface):
     @property
     def has_missing_data(self) -> bool:
         return self._op.has_missing_data
+
+    @property
+    def has_individual_coals(self) -> bool:
+        return True  # TODO: support this downstream
 
     def get_mutation_by_id(self, id: int) -> pygrgl.Mutation:
         return self._op.get_mutation_by_id(id)
