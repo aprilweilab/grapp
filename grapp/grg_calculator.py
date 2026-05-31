@@ -1,9 +1,9 @@
 from abc import ABC, abstractmethod
 import pygrgl
 import numpy
+import threading
 import concurrent.futures
 from typing import Optional, Union, Dict, Callable, List, Any
-from grapp.util.exceptions import UserInputError
 
 try:
     import pygrgl_spmv
@@ -138,6 +138,30 @@ class GRGThreadSched(GRGScheduler):
         return GRGThreadOp(self.executor.submit(operation, *args, **kwargs))
 
 
+class GRGGatedSched(GRGScheduler):
+    def __init__(self, executor: concurrent.futures.Executor, gated=False):
+        self.executor = executor
+        self.gated = gated
+        self._start_gate = threading.Event()
+        if not self.gated:
+            self._start_gate.set()
+
+    def _gated_operation(self, operation, *args, **kwargs):
+        self._start_gate.wait()
+        return operation(*args, **kwargs)
+    
+    def start(self) -> None:
+        self._start_gate.set()
+
+    def reset(self) -> None:
+        if not self.gated:
+            raise ValueError("Cannot reset a non-gated scheduler")
+        self._start_gate.clear()
+
+    def submit(self, grg: GRGCalcInterface, operation, *args, **kwargs) -> GRGWaitable:
+        return GRGThreadOp(self.executor.submit(self._gated_operation, operation, *args, **kwargs))
+
+
 class GRGCalculator(GRGCalcInterface):
     """
     Implementaion of the GRG calculator interface for the regular GRG. This is what most
@@ -220,6 +244,14 @@ class GRGSpMVCalculator(GRGCalcInterface):
         self._op = grg_spmv
 
     @property
+    def device(self) -> int | None:
+        return getattr(self._op, "device", None)
+    
+    @property
+    def use_cupy(self) -> bool:
+        return getattr(self._op, "use_cupy", False)
+
+    @property
     def num_samples(self) -> int:
         return self._op.num_samples
 
@@ -283,8 +315,9 @@ class GRGSpMVCalculator(GRGCalcInterface):
             miss=miss,
         )
 
-    def make_scheduler(self, grgs: List["GRGCalcInterface"], workers: int = 1):
-        return GRGSeqSched()
+    def make_scheduler(self, grgs: List["GRGCalcInterface"], workers: int = 1, gated: bool = False):
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
+        return GRGGatedSched(executor=executor, gated=gated)
 
 
 def load_grg_calculator(filename: str) -> GRGCalcInterface:
@@ -298,10 +331,14 @@ def load_grg_calculator(filename: str) -> GRGCalcInterface:
             )
         ),
     }
+    from grapp.util.exceptions import UserInputError
     if pygrgl_spmv is not None:
-        extension_to_loader[".grg_spmv"] = lambda filename: GRGSpMVCalculator(
-            pygrgl_spmv.load(filename)
-        )
+        def _raise_spmv_error(filename: str) -> GRGCalcInterface:
+            raise UserInputError(
+                "grg_spmv files cannot be loaded directly."
+            )
+
+        extension_to_loader[".grg_spmv"] = _raise_spmv_error
     for ext, loader in extension_to_loader.items():
         if filename.endswith(ext):
             return loader(filename)
