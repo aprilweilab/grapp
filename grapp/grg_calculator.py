@@ -11,6 +11,132 @@ except ImportError:
     pygrgl_spmv = None  # typing: ignore
 
 
+def _scipy_operator_table() -> Dict[tuple, Callable]:
+    # Lazy import to avoid a circular import: grapp.linalg and grapp.util both import
+    # grapp.grg_calculator. Keys are (op, standardized, multi). "X" and "XT" share a class
+    # (distinguished by the direction passed to the constructor). The non-standardized multi-XXT
+    # operator is absent. "FREQ" maps to the allele-frequency function (not a LinearOperator),
+    # "EIGSH" to the sparse symmetric eigensolver, and "TO_NUMPY"/"FROM_NUMPY" to host<->backend
+    # array converters (no-ops here since the SciPy backend already uses numpy arrays).
+    from grapp.linalg import ops_scipy as m
+    from grapp.util.simple import allele_frequencies
+    from scipy.sparse.linalg import eigsh
+
+    return {
+        ("X", False, False): m.SciPyXOperator,
+        ("XT", False, False): m.SciPyXOperator,
+        ("XTX", False, False): m.SciPyXTXOperator,
+        ("XXT", False, False): m.SciPyXXTOperator,
+        ("X", True, False): m.SciPyStdXOperator,
+        ("XT", True, False): m.SciPyStdXOperator,
+        ("XTX", True, False): m.SciPyStdXTXOperator,
+        ("XXT", True, False): m.SciPyStdXXTOperator,
+        ("X", False, True): m.MultiSciPyXOperator,
+        ("XT", False, True): m.MultiSciPyXOperator,
+        ("XTX", False, True): m.MultiSciPyXTXOperator,
+        ("X", True, True): m.MultiSciPyStdXOperator,
+        ("XT", True, True): m.MultiSciPyStdXOperator,
+        ("XTX", True, True): m.MultiSciPyStdXTXOperator,
+        ("XXT", True, True): m.MultiSciPyStdXXTOperator,
+        ("FREQ", False, False): allele_frequencies,
+        ("FREQ", True, False): allele_frequencies,
+        ("EIGSH", False, False): eigsh,
+        ("EIGSH", True, False): eigsh,
+        ("TO_NUMPY", False, False): numpy.asarray,
+        ("TO_NUMPY", True, False): numpy.asarray,
+        ("FROM_NUMPY", False, False): numpy.asarray,
+        ("FROM_NUMPY", True, False): numpy.asarray,
+    }
+
+
+def _cupy_operator_table() -> Dict[tuple, Callable]:
+    # Lazy import; CuPy is only available when the GPU stack is installed.
+    import cupy
+    from grapp.linalg import ops_cupy as m
+    from grapp.util.simple import allele_frequencies_cupy
+    from cupyx.scipy.sparse.linalg import eigsh
+
+    def _to_numpy(arr):
+        # Sync the whole device so all in-flight kernels producing ``arr`` are
+        # complete before it is read back to the host.
+        cupy.cuda.Device().synchronize()
+        return cupy.asnumpy(arr)
+
+    def _from_numpy(arr):
+        # Upload to the device, then sync so the H2D copy is guaranteed complete
+        # before the array is consumed (possibly on another thread/stream).
+        out = cupy.asarray(arr)
+        cupy.cuda.Device().synchronize()
+        return out
+
+    return {
+        ("X", False, False): m.CuPyXOperator,
+        ("XT", False, False): m.CuPyXOperator,
+        ("XTX", False, False): m.CuPyXTXOperator,
+        ("XXT", False, False): m.CuPyXXTOperator,
+        ("X", True, False): m.CuPyStdXOperator,
+        ("XT", True, False): m.CuPyStdXOperator,
+        ("XTX", True, False): m.CuPyStdXTXOperator,
+        ("XXT", True, False): m.CuPyStdXXTOperator,
+        ("X", False, True): m.MultiCuPyXOperator,
+        ("XT", False, True): m.MultiCuPyXOperator,
+        ("XTX", False, True): m.MultiCuPyXTXOperator,
+        ("XXT", False, True): m.MultiCuPyXXTOperator,
+        ("X", True, True): m.MultiCuPyStdXOperator,
+        ("XT", True, True): m.MultiCuPyStdXOperator,
+        ("XTX", True, True): m.MultiCuPyStdXTXOperator,
+        ("XXT", True, True): m.MultiCuPyStdXXTOperator,
+        ("FREQ", False, False): allele_frequencies_cupy,
+        ("FREQ", True, False): allele_frequencies_cupy,
+        ("EIGSH", False, False): eigsh,
+        ("EIGSH", True, False): eigsh,
+        ("TO_NUMPY", False, False): _to_numpy,
+        ("TO_NUMPY", True, False): _to_numpy,
+        ("FROM_NUMPY", False, False): _from_numpy,
+        ("FROM_NUMPY", True, False): _from_numpy,
+    }
+
+
+def _select_operator_cls(backend: str, op: str, standardized: bool, multi: bool) -> Callable:
+    """
+    Map (op, standardized, multi) to a LinearOperator class (or, for the non-matrix ops, a callable)
+    for the given backend, hiding the SciPy/CuPy choice from downstream code. Returns the
+    class/callable, not an instance/result; the caller invokes it with whatever arguments it needs
+    (grg(s), direction, freqs, ...). The non-matrix ops are: ``"FREQ"`` (allele-frequency function),
+    ``"EIGSH"`` (sparse symmetric eigensolver), and ``"TO_NUMPY"``/``"FROM_NUMPY"`` (host<->backend
+    array converters).
+
+    :param backend: ``"SciPy"`` or ``"CuPy"``.
+    :param op: One of ``"X"``, ``"XT"``, ``"XTX"``, ``"XXT"``, ``"FREQ"``, ``"EIGSH"``,
+        ``"TO_NUMPY"``, ``"FROM_NUMPY"`` (case-insensitive).
+    :param standardized: Select the standardized (mean/variance-scaled) operator. Ignored for the
+        non-matrix ops.
+    :param multi: Select the multi-GRG variant.
+    :raises ValueError: For an unrecognized ``op`` or ``backend``.
+    :raises NotImplementedError: When the backend has no entry for the requested combination
+        (e.g. the non-standardized multi-XXT operator does not exist for SciPy, and the non-matrix
+        ops have no multi variant).
+    """
+    op = op.upper()
+    if op not in ("X", "XT", "XTX", "XXT", "FREQ", "EIGSH", "TO_NUMPY", "FROM_NUMPY"):
+        raise ValueError(
+            f"Unknown operator {op!r}. Expected one of 'X', 'XT', 'XTX', 'XXT', 'FREQ', 'EIGSH', "
+            f"'TO_NUMPY', 'FROM_NUMPY'."
+        )
+    if backend == "SciPy":
+        table = _scipy_operator_table()
+    elif backend == "CuPy":
+        table = _cupy_operator_table()
+    else:
+        raise ValueError(f"Unknown backend {backend!r}. Expected 'SciPy' or 'CuPy'.")
+    cls = table.get((op, standardized, multi))
+    if cls is None:
+        raise NotImplementedError(
+            f"No {backend} operator for op={op!r}, standardized={standardized}, multi={multi}."
+        )
+    return cls
+
+
 class GRGWaitable(ABC):
     """
     Generic interface for a GRG-related job that can be waited upon.
@@ -103,6 +229,25 @@ class GRGCalcInterface(ABC):
 
     @abstractmethod
     def make_scheduler(self, grgs: List["GRGCalcInterface"], workers: int = 1):
+        pass
+
+    @abstractmethod
+    def get_operator(self, op: str, standardized: bool) -> Callable:
+        """
+        Return the single-GRG LinearOperator class for ``op`` ("X", "XT", "XTX", "XXT"), choosing
+        the backend (SciPy/CuPy) appropriate for this calculator. Returns the class, not an
+        instance; the caller constructs it (passing direction for "X"/"XT", freqs when standardized).
+
+        ``op="freq"`` and ``op="eigsh"`` instead returns the backend's allele-frequency function, which the caller
+        invokes as ``fn(grg, ...)``.
+        """
+        pass
+
+    @abstractmethod
+    def get_multi_operator(self, op: str, standardized: bool) -> Callable:
+        """
+        Like :meth:`get_operator`, but returns the multi-GRG ("Multi...") LinearOperator class.
+        """
         pass
 
 
@@ -234,6 +379,12 @@ class GRGCalculator(GRGCalcInterface):
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
         return GRGThreadSched(executor)
 
+    def get_operator(self, op: str, standardized: bool) -> Callable:
+        return _select_operator_cls("SciPy", op, standardized, multi=False)
+
+    def get_multi_operator(self, op: str, standardized: bool) -> Callable:
+        return _select_operator_cls("SciPy", op, standardized, multi=True)
+
 
 class GRGSpMVCalculator(GRGCalcInterface):
     """
@@ -318,6 +469,14 @@ class GRGSpMVCalculator(GRGCalcInterface):
     def make_scheduler(self, grgs: List["GRGCalcInterface"], workers: int = 1, gated: bool = False):
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
         return GRGGatedSched(executor=executor, gated=gated)
+
+    def get_operator(self, op: str, standardized: bool) -> Callable:
+        backend = "CuPy" if self.use_cupy else "SciPy"
+        return _select_operator_cls(backend, op, standardized, multi=False)
+
+    def get_multi_operator(self, op: str, standardized: bool) -> Callable:
+        backend = "CuPy" if self.use_cupy else "SciPy"
+        return _select_operator_cls(backend, op, standardized, multi=True)
 
 
 def load_grg_calculator(filename: str) -> GRGCalcInterface:

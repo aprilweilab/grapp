@@ -15,7 +15,7 @@ from scipy.sparse.linalg import eigsh
 from typing import Tuple, List, Dict, Any, Union, Optional
 
 from grapp.util import allele_frequencies as _allele_frequencies
-from grapp.grg_calculator import GRGCalcInterface as _GRGCalcInterface
+from grapp.grg_calculator import GRGCalcInterface as _GRGCalcInterface, _wrap_grg
 
 # Everything below is imported so that users can import them via grapp.linalg
 from grapp.linalg.ops_scipy import (  # noqa: F401
@@ -180,39 +180,47 @@ def get_eig_pcs(
     :return: A pair (PC_scores, eigen_values) where each is a numpy array.
     :rtype: Tuple[numpy.ndarray, numpy.ndarray, Optional[numpy.ndarray]]
     """
+    # Route everything through the backend-agnostic operator selector so this works for both the
+    # NumPy (GRGCalculator) and CuPy (GRGSpMVCalculator) backends.
+    is_list = isinstance(grgs, list)
+    grg_list = [_wrap_grg(g) for g in grgs] if is_list else None
+    grg = None if is_list else _wrap_grg(grgs)
+    repr_grg = grg_list[0] if is_list else grg
+
+    freq_fn = repr_grg.get_operator("freq", standardized=True)
+    eigsh_fn = repr_grg.get_operator("eigsh", standardized=True)
+    to_numpy = repr_grg.get_operator("to_numpy", standardized=True)
+    from_numpy = repr_grg.get_operator("from_numpy", standardized=True)
+    op_name = "XTX" if do_xtx else "XXT"
+
     freqs: Union[List[numpy.typing.NDArray], numpy.typing.NDArray]
-    if isinstance(grgs, list):
+    if is_list:
         executor = concurrent.futures.ThreadPoolExecutor(threads)
-        futures = [executor.submit(_allele_frequencies, grg) for grg in grgs]
+        futures = [executor.submit(freq_fn, grg) for grg in grg_list]
         freqs = [f.result() for f in futures]
-        if do_xtx:
-            op = MultiSciPyStdXTXOperator(
-                grgs, freqs, haploid=False, threads=threads, **op_kwargs
-            )
-        else:
-            op = MultiSciPyStdXXTOperator(
-                grgs, freqs, haploid=False, threads=threads, **op_kwargs
-            )
+        op = repr_grg.get_multi_operator(op_name, standardized=True)(
+            grg_list, freqs, haploid=False, threads=threads, **op_kwargs
+        )
     else:
-        freqs = _allele_frequencies(grgs, adjust_missing=True)
-        if do_xtx:
-            op = SciPyStdXTXOperator(grgs, freqs, haploid=False, **op_kwargs)
-        else:
-            op = SciPyStdXXTOperator(grgs, freqs, haploid=False, **op_kwargs)
+        freqs = freq_fn(grg, adjust_missing=True)
+        op = repr_grg.get_operator(op_name, standardized=True)(
+            grg, freqs, haploid=False, **op_kwargs
+        )
     if verbose:
         what = "variants" if do_xtx else "individuals"
         print(f"Running eigen decomposition on {op.shape[0]} {what}")
 
-    eigen_values, eigen_vectors = eigsh(op, k=k, which="LM")
+    eigen_values, eigen_vectors = eigsh_fn(op, k=k, which="LM")
+    eigen_values, eigen_vectors = to_numpy(eigen_values), to_numpy(eigen_vectors)
     sort_by_eigvalues(eigen_values, eigen_vectors)
     assert eigen_vectors.real.dtype == numpy.float64
     if not do_xtx:
         return eigen_vectors, eigen_values, None
 
     # If we did X^TX then we need to get the PC scores by performing one more product
-    if isinstance(grgs, list):
-        pc_op = MultiSciPyStdXOperator(
-            grgs,
+    if is_list:
+        pc_op = repr_grg.get_multi_operator("X", standardized=True)(
+            grg_list,
             pygrgl.TraversalDirection.UP,
             freqs,  # type: ignore
             haploid=False,
@@ -220,16 +228,17 @@ def get_eig_pcs(
             **op_kwargs,
         )
     else:
-        pc_op = SciPyStdXOperator(
-            grgs,
+        pc_op = repr_grg.get_operator("X", standardized=True)(
+            grg,
             pygrgl.TraversalDirection.UP,
             freqs,  # type: ignore
             haploid=False,
             **op_kwargs,
         )
-    # ... and then scaling the result
+    
     PC_scores = (
-        pc_op._matmat(eigen_vectors.real) / numpy.sqrt(eigen_values.real)[None, :]
+        to_numpy(pc_op._matmat(from_numpy(eigen_vectors.real)))
+        / numpy.sqrt(eigen_values.real)[None, :]
     )
     return PC_scores, eigen_values, eigen_vectors
 
