@@ -159,10 +159,17 @@ def get_eig_pcs(
     threads: int = 1,
     verbose: bool = True,
     do_xtx: bool = False,
+    init_vector: Optional[numpy.typing.NDArray] = None,
+    tol: float = 0,
 ) -> Tuple[NDArray, NDArray, Optional[NDArray]]:
     """
     Get the principal components for each sample corresponding to the first :math:`k` eigenvectors from a GRG,
     using an iterative eigenvector decomposition method.
+
+    The computation is routed through the backend-agnostic operator selector on
+    :class:`~grapp.grg_calculator.GRGCalcInterface`, so it runs on either the NumPy/CPU backend
+    (``GRGCalculator``) or the CuPy/GPU backend (``GRGSpMVCalculator``) depending on the GRG passed
+    in. Regardless of backend, the returned arrays are host NumPy arrays.
 
     :param grgs: The GRG or list of GRGs to perform PCA on.
     :type grgs: Union[pygrgl.GRG, List[pygrgl.GRG]]
@@ -174,9 +181,14 @@ def get_eig_pcs(
     :param threads: Maximum number of threads to use. At most len(grgs) tasks can be done in parallel.
     :type threads: int
     :param verbose: Emit information on stderr.
-    :type verboose: bool
+    :type verbose: bool
     :param do_xtx: Use eigsh(X^TX) instead of the default eigsh(XX^T). Default: False.
     :type do_xtx: bool
+    :param init_vector: Optional starting vector for the iterative solver, passed to eigsh as ``v0``.
+    :type init_vector: Optional[numpy.typing.NDArray]
+    :param tol: Convergence tolerance for the iterative solver, passed to eigsh. 0 means machine
+        precision. Default: 0.
+    :type tol: float
     :return: A pair (PC_scores, eigen_values) where each is a numpy array.
     :rtype: Tuple[numpy.ndarray, numpy.ndarray, Optional[numpy.ndarray]]
     """
@@ -210,7 +222,7 @@ def get_eig_pcs(
         what = "variants" if do_xtx else "individuals"
         print(f"Running eigen decomposition on {op.shape[0]} {what}")
 
-    eigen_values, eigen_vectors = eigsh_fn(op, k=k, which="LM")
+    eigen_values, eigen_vectors = eigsh_fn(op, k=k, which="LM", v0=init_vector, tol=tol)
     eigen_values, eigen_vectors = to_numpy(eigen_values), to_numpy(eigen_vectors)
     sort_by_eigvalues(eigen_values, eigen_vectors)
     assert eigen_vectors.real.dtype == numpy.float64
@@ -252,6 +264,9 @@ def PCs(
     use_pro_pca: bool = False,
     sample_window: int = 1,
     threads: int = 1,
+    init_vector: Optional[numpy.typing.NDArray] = None,
+    tol: float = 0,
+    include_eig_val: bool = False
 ):
     """
     Get the principal components for each sample corresponding to the first :math:`k` eigenvectors from a GRG.
@@ -272,6 +287,14 @@ def PCs(
     :param threads: Number of threads to use. Will never use more than the number of input GRGs.
         Default: 1.
     :type threads: int
+    :param init_vector: Optional starting vector for the iterative solver, passed to eigsh as ``v0``.
+    :type init_vector: Optional[numpy.typing.NDArray]
+    :param tol: Convergence tolerance for the iterative solver, passed to eigsh. 0 means machine
+        precision. Default: 0.
+    :type tol: float
+    :param include_eig_val: When True (and include_eig is False), return a pair (DataFrame, eigen values)
+        instead of just the DataFrame. Default: False.
+    :type include_eig_val: bool
     :return: A pandas.DataFrame with a row per individual and a column per principal component. Or, if include_eig
         then a triple (dataframe, eigen values, eigen vectors), where eigen vectors are None unless use_pro_pca
         was True.
@@ -308,6 +331,8 @@ def PCs(
             threads=threads,
             op_kwargs={"mutation_filter": mutation_filter},
             do_xtx=include_eig,
+            init_vector=init_vector,
+            tol=tol,
         )
 
     colnames = [f"PC{i+1}" for i in range(PC_scores.shape[1])]
@@ -315,4 +340,6 @@ def PCs(
     df.index.name = "Individual"
     if include_eig:
         return df, eigen_values, eigen_vectors
+    if include_eig_val:
+        return df, eigen_values
     return df
