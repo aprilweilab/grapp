@@ -255,8 +255,11 @@ class CuPyXOperator(LinearOperator):
                     kwargs["miss"] = M
 
                 with cuda.Device(self._device):
-                    result = self.grg.matmul(
-                        A, mult_dir, by_individual=not self.haploid, **kwargs
+                    result = self.grg.get_raw().matmul(
+                        A,
+                        self.grg._convert_dir(mult_dir),
+                        by_individual=not self.haploid,
+                        **kwargs,
                     )
 
                 if mult_dir == _UP and use_M:
@@ -505,8 +508,10 @@ class CuPyStdXOperator(_CuPyStandardizedOperator):
 
                     with _nvtx("StdX_matmul"):
                         with cuda.Device(self._device):
-                            XvS = self.grg.matmul(
-                                vS, mult_dir, by_individual=not self.haploid
+                            XvS = self.grg.get_raw().matmul(
+                                vS,
+                                self.grg._convert_dir(mult_dir),
+                                by_individual=not self.haploid,
                             )
                             xp.cuda.get_current_stream().synchronize()
 
@@ -525,8 +530,10 @@ class CuPyStdXOperator(_CuPyStandardizedOperator):
                         # See UP branch: re-assert self._device around the native
                         # matmul so the post-matmul math stays on the right device.
                         with cuda.Device(self._device):
-                            SXv_raw = self.grg.matmul(
-                                m, mult_dir, by_individual=not self.haploid
+                            SXv_raw = self.grg.get_raw().matmul(
+                                m,
+                                self.grg._convert_dir(mult_dir),
+                                by_individual=not self.haploid,
                             )
                             xp.cuda.get_current_stream().synchronize()
                             SXv = SXv_raw * self.inverse_sigma

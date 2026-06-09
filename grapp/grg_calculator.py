@@ -62,7 +62,7 @@ def _cupy_operator_table() -> Dict[tuple, Callable]:
 
         _convert_if_present(kwargs, "M")
         _convert_if_present(kwargs, "v0")
-        eigval, eigvect = eigsh(cupy.asarray(A), **kwargs)
+        eigval, eigvect = eigsh(A, **kwargs)
         cupy.cuda.Device().synchronize()
         return cupy.asnumpy(eigval), cupy.asnumpy(eigvect)
 
@@ -249,6 +249,14 @@ class GRGCalcInterface(ABC):
     def device_context(self):
         pass
 
+    @abstractmethod
+    def get_raw(self):
+        pass
+
+    @abstractmethod
+    def _convert_dir(self, d):
+        pass
+
 
 class GRGSeqOp(GRGWaitable):
     def __init__(self, value):
@@ -391,6 +399,12 @@ class GRGCalculator(GRGCalcInterface):
     def device_context(self):
         return contextlib.suppress()
 
+    def get_raw(self):
+        return self.grg
+
+    def _convert_dir(self, d):
+        return d
+
 
 class GRGSpMVCalculator(GRGCalcInterface):
     """
@@ -463,21 +477,34 @@ class GRGSpMVCalculator(GRGCalcInterface):
         init: Optional[Union[str, numpy.typing.NDArray]] = None,
         miss: Optional[numpy.typing.NDArray] = None,
     ) -> numpy.typing.NDArray:
-        mm_input = cupy.asarray(input) if self.use_cupy else input
-        mm_init = cupy.asarray(init) if self.use_cupy else init
-        mm_miss = cupy.asarray(miss) if self.use_cupy else miss
-        result = self._op.matmul(
-            mm_input,
-            self._convert_dir(direction),
-            emit_all_nodes=emit_all_nodes,
-            by_individual=by_individual,
-            init=mm_init,
-            miss=mm_miss,
-        )
         if self.use_cupy:
-            cupy.cuda.Device().synchronize()
-            result = cupy.asnumpy()
+            with cupy.cuda.Device(self.device):
+                mm_input = cupy.asarray(input)
+                mm_init = cupy.asarray(init) if init is not None else init
+                mm_miss = cupy.asarray(miss) if miss is not None else miss
+                result = self._op.matmul(
+                    mm_input,
+                    self._convert_dir(direction),
+                    emit_all_nodes=emit_all_nodes,
+                    by_individual=by_individual,
+                    init=mm_init,
+                    miss=mm_miss,
+                )
+                cupy.cuda.Device().synchronize()
+                result = cupy.asnumpy(result)
+        else:
+            result = self._op.matmul(
+                input,
+                self._convert_dir(direction),
+                emit_all_nodes=emit_all_nodes,
+                by_individual=by_individual,
+                init=init,
+                miss=miss,
+            )
         return result
+
+    def get_raw(self):
+        return self._op
 
     def make_scheduler(
         self, grgs: List["GRGCalcInterface"], workers: int = 1, gated: bool = False
