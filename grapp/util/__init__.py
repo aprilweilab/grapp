@@ -7,3 +7,4 @@ from .simple import (  # noqa: F401
     get_variant_type,
     variants_of_types,
 )
+from .parallel import split_and_run  # noqa: F401
