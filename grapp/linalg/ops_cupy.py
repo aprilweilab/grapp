@@ -7,9 +7,9 @@ not installed.
 
 Memory model
 ------------
-For single-GRG operators, the input and output buffers are assumed to be 
-on the GRG's device. For multi-GRG operators, the input and output buffers 
-are assumed to be on the "primary device", which should be the device of 
+For single-GRG operators, the input and output buffers are assumed to be
+on the GRG's device. For multi-GRG operators, the input and output buffers
+are assumed to be on the "primary device", which should be the device of
 the first GRG.
 
 Stream model
@@ -31,7 +31,6 @@ from grapp.grg_calculator import (
     _wrap_grg,
 )
 
-
 # When True, cross-device copies are routed D2H + H2D instead of using
 # cudaMemcpyPeer / NVLink.  Set before any operator _matmat call to benchmark
 # PCIe-only transfers.
@@ -44,12 +43,15 @@ _UP = TraversalDirection.UP
 def _flip_dir(direction: TraversalDirection) -> TraversalDirection:
     return _UP if direction == _DOWN else _DOWN
 
+
 def _transpose_shape(shape: Tuple[int, int]) -> Tuple[int, int]:
     return (shape[1], shape[0])
+
 
 # ---------------------------------------------------------------------------
 # NVTX helper
 # ---------------------------------------------------------------------------
+
 
 @contextmanager
 def _nvtx(name: str):
@@ -65,6 +67,7 @@ def _nvtx(name: str):
 # Cross-device helpers
 # ---------------------------------------------------------------------------
 
+
 def _xdev_copy(dst, src) -> None:
     """Write src into dst, routing through host when force_host_xdev_copy is set.
 
@@ -76,7 +79,11 @@ def _xdev_copy(dst, src) -> None:
         with cuda.Device(dst.device):
             dst[:] = xp.asarray(src.get())
     else:
-        if hasattr(src, "device") and hasattr(dst, "device") and src.device != dst.device:
+        if (
+            hasattr(src, "device")
+            and hasattr(dst, "device")
+            and src.device != dst.device
+        ):
             with cuda.Device(src.device):
                 xp.cuda.get_current_stream().synchronize()
         with cuda.Device(dst.device):
@@ -85,8 +92,7 @@ def _xdev_copy(dst, src) -> None:
 
 
 def _xdev_asarray(src):
-    """Return src as a CuPy array on the current device, copying if necessary.
-    """
+    """Return src as a CuPy array on the current device, copying if necessary."""
     if force_host_xdev_copy and hasattr(src, "get"):
         return xp.asarray(src.get())
     dev = getattr(src, "device", None)
@@ -102,6 +108,7 @@ def _xdev_asarray(src):
 # ---------------------------------------------------------------------------
 # GRGOpFilter
 # ---------------------------------------------------------------------------
+
 
 class GRGOpFilter:
     """Handles optional mutation and sample sub-selection for GRG operators."""
@@ -135,7 +142,9 @@ class GRGOpFilter:
             self.grg_shape[0] if sample_filter is None else len(sample_filter),
             self.grg_shape[1] if mutation_filter is None else len(mutation_filter),
         )
-        self.is_filtering = self.sample_filter is not None or self.mutation_filter is not None
+        self.is_filtering = (
+            self.sample_filter is not None or self.mutation_filter is not None
+        )
         self._device = getattr(grg, "device", None)
 
     def prep_input(self, input_matrix, mult_dir: TraversalDirection):
@@ -219,7 +228,9 @@ class CuPyXOperator(LinearOperator):
             miss_values is None or miss_values.ndim == 1
         ), '"miss_values" must be a 1-D vector'
         with cuda.Device(self._device):
-            self.miss_values = xp.asarray(miss_values) if miss_values is not None else None
+            self.miss_values = (
+                xp.asarray(miss_values) if miss_values is not None else None
+            )
         shape = self.filter.shape
         if self.direction == _DOWN:
             shape = _transpose_shape(shape)
@@ -291,8 +302,13 @@ class CuPyXTXOperator(LinearOperator):
         sample_filter: Optional[Union[List[int], numpy.ndarray]] = None,
     ):
         self.x_op = CuPyXOperator(
-            grg, _UP, dtype=dtype, haploid=haploid, miss_values=miss_values,
-            mutation_filter=mutation_filter, sample_filter=sample_filter,
+            grg,
+            _UP,
+            dtype=dtype,
+            haploid=haploid,
+            miss_values=miss_values,
+            mutation_filter=mutation_filter,
+            sample_filter=sample_filter,
         )
         self._device = self.x_op._device
         super().__init__(dtype=dtype, shape=(self.x_op.shape[1], self.x_op.shape[1]))
@@ -331,8 +347,13 @@ class CuPyXXTOperator(LinearOperator):
         sample_filter: Optional[Union[List[int], numpy.ndarray]] = None,
     ):
         self.x_op = CuPyXOperator(
-            grg, _UP, dtype=dtype, haploid=haploid, miss_values=miss_values,
-            mutation_filter=mutation_filter, sample_filter=sample_filter,
+            grg,
+            _UP,
+            dtype=dtype,
+            haploid=haploid,
+            miss_values=miss_values,
+            mutation_filter=mutation_filter,
+            sample_filter=sample_filter,
         )
         self._device = self.x_op._device
         self.grg = self.x_op.grg
@@ -366,6 +387,7 @@ class CuPyXXTOperator(LinearOperator):
 # ---------------------------------------------------------------------------
 # Standardized operators
 # ---------------------------------------------------------------------------
+
 
 class _CuPyStandardizedOperator(LinearOperator):
     """
@@ -447,14 +469,21 @@ class CuPyStdXOperator(_CuPyStandardizedOperator):
         alpha: float = -1,
         custom_variance: Optional[numpy.ndarray] = None,
     ):
-        self.filter = GRGOpFilter(_wrap_grg(grg), haploid, mutation_filter, sample_filter)
+        self.filter = GRGOpFilter(
+            _wrap_grg(grg), haploid, mutation_filter, sample_filter
+        )
         self.direction = direction
         shape = self.filter.shape
         if self.direction == _DOWN:
             shape = _transpose_shape(shape)
         super().__init__(
-            grg, freqs, shape, dtype=dtype, haploid=haploid,
-            alpha=alpha, custom_variance=custom_variance,
+            grg,
+            freqs,
+            shape,
+            dtype=dtype,
+            haploid=haploid,
+            alpha=alpha,
+            custom_variance=custom_variance,
         )
 
     def _matmat_direction(self, other_matrix, direction: TraversalDirection, out=None):
@@ -508,7 +537,9 @@ class CuPyStdXOperator(_CuPyStandardizedOperator):
                             sub_const2 = (
                                 self.mult_const * self.freqs * self.inverse_sigma
                             ) * col_const
-                            result = self.filter.adjust_output(SXv - sub_const2, mult_dir).T
+                            result = self.filter.adjust_output(
+                                SXv - sub_const2, mult_dir
+                            ).T
 
                 if out is not None:
                     # Sync self._device stream; queue copy on out.device's null stream.
@@ -550,9 +581,15 @@ class CuPyStdXTXOperator(LinearOperator):
         custom_variance: Optional[numpy.ndarray] = None,
     ):
         self.std_x_op = CuPyStdXOperator(
-            grg, _UP, freqs, dtype=dtype, haploid=haploid,
-            mutation_filter=mutation_filter, sample_filter=sample_filter,
-            alpha=alpha, custom_variance=custom_variance,
+            grg,
+            _UP,
+            freqs,
+            dtype=dtype,
+            haploid=haploid,
+            mutation_filter=mutation_filter,
+            sample_filter=sample_filter,
+            alpha=alpha,
+            custom_variance=custom_variance,
         )
         self._device = self.std_x_op._device
         super().__init__(
@@ -595,9 +632,15 @@ class CuPyStdXXTOperator(LinearOperator):
         custom_variance: Optional[numpy.ndarray] = None,
     ):
         self.std_x_op = CuPyStdXOperator(
-            grg, _UP, freqs, dtype=dtype, haploid=haploid,
-            mutation_filter=mutation_filter, sample_filter=sample_filter,
-            alpha=alpha, custom_variance=custom_variance,
+            grg,
+            _UP,
+            freqs,
+            dtype=dtype,
+            haploid=haploid,
+            mutation_filter=mutation_filter,
+            sample_filter=sample_filter,
+            alpha=alpha,
+            custom_variance=custom_variance,
         )
         self._device = self.std_x_op._device
         self.grg = self.std_x_op.grg
@@ -633,6 +676,7 @@ class CuPyStdXXTOperator(LinearOperator):
 # ---------------------------------------------------------------------------
 # Multi-GRG operators
 # ---------------------------------------------------------------------------
+
 
 def _build_per_grg_mut_filt(mutation_filter, prev_max_mut, g):
     """Remap global mutation_filter indices to per-GRG local indices."""
@@ -682,18 +726,29 @@ class MultiCuPyXOperator(LinearOperator):
         prev_miss_start = 0
         prev_max_mut = 0
         for g in grgs:
-            assert g.num_samples == grgs[0].num_samples, "All GRGs must use the same samples"
-            grg_mut_filt, skip = _build_per_grg_mut_filt(mutation_filter, prev_max_mut, g)
+            assert (
+                g.num_samples == grgs[0].num_samples
+            ), "All GRGs must use the same samples"
+            grg_mut_filt, skip = _build_per_grg_mut_filt(
+                mutation_filter, prev_max_mut, g
+            )
             if not skip:
-                effective_muts = len(grg_mut_filt) if grg_mut_filt is not None else g.num_mutations
+                effective_muts = (
+                    len(grg_mut_filt) if grg_mut_filt is not None else g.num_mutations
+                )
                 if miss_values is not None:
-                    grg_miss = miss_values[prev_miss_start:prev_miss_start + effective_muts]
+                    grg_miss = miss_values[
+                        prev_miss_start : prev_miss_start + effective_muts
+                    ]
                     prev_miss_start += effective_muts
                 else:
                     grg_miss = None
                 self.operators.append(
                     CuPyXOperator(
-                        g, direction, dtype, haploid=haploid,
+                        g,
+                        direction,
+                        dtype,
+                        haploid=haploid,
                         miss_values=grg_miss,
                         mutation_filter=grg_mut_filt,
                         sample_filter=sample_filter,
@@ -703,9 +758,15 @@ class MultiCuPyXOperator(LinearOperator):
         self._output_device = self.operators[0]._device
         self.scheduler = _wrap_grg(grgs[0]).make_scheduler(grgs, threads)
         if direction == _UP:
-            shape = (self.operators[0].shape[0], sum(op.shape[1] for op in self.operators))
+            shape = (
+                self.operators[0].shape[0],
+                sum(op.shape[1] for op in self.operators),
+            )
         else:
-            shape = (sum(op.shape[0] for op in self.operators), self.operators[0].shape[1])
+            shape = (
+                sum(op.shape[0] for op in self.operators),
+                self.operators[0].shape[1],
+            )
         super().__init__(dtype=dtype, shape=shape)
 
     def _matmat_helper(self, other_matrix, direction, op_method):
@@ -719,11 +780,13 @@ class MultiCuPyXOperator(LinearOperator):
                 # axes of each sub-operator depend on self.direction (UP exposes
                 # shape (N, M_i); DOWN exposes shape (M_i, N)).
                 op_muts = (
-                    (lambda op: op.shape[0]) if self.direction == _DOWN
+                    (lambda op: op.shape[0])
+                    if self.direction == _DOWN
                     else (lambda op: op.shape[1])
                 )
                 n_rows = (
-                    self.operators[0].shape[1] if self.direction == _DOWN
+                    self.operators[0].shape[1]
+                    if self.direction == _DOWN
                     else self.operators[0].shape[0]
                 )
                 parts = []
@@ -736,7 +799,9 @@ class MultiCuPyXOperator(LinearOperator):
                     sub = other_matrix[start:end, :]
                     with cuda.Device(op._device):
                         sub = _xdev_asarray(sub)
-                    futures.append(self.scheduler.submit(op.grg, op_method, op, sub, part))
+                    futures.append(
+                        self.scheduler.submit(op.grg, op_method, op, sub, part)
+                    )
                     start = end
                 returned_parts = []
                 for f in futures:
@@ -750,7 +815,8 @@ class MultiCuPyXOperator(LinearOperator):
             else:
                 # Each op gets the full input; outputs are concatenated.
                 op_rows = (
-                    (lambda op: op.shape[0]) if self.direction == _DOWN
+                    (lambda op: op.shape[0])
+                    if self.direction == _DOWN
                     else (lambda op: op.shape[1])
                 )
                 total_rows = sum(op_rows(op) for op in self.operators)
@@ -763,7 +829,9 @@ class MultiCuPyXOperator(LinearOperator):
                     with cuda.Device(op._device):
                         op_input = _xdev_asarray(other_matrix)
                     futures.append(
-                        self.scheduler.submit(op.grg, op_method, op, op_input, out_slice)
+                        self.scheduler.submit(
+                            op.grg, op_method, op, op_input, out_slice
+                        )
                     )
                     start = end
                 for f in futures:
@@ -812,7 +880,10 @@ class MultiCuPyXTXOperator(LinearOperator):
         threads: int = 1,
     ):
         self.x_op = MultiCuPyXOperator(
-            grgs, _UP, dtype=dtype, haploid=haploid,
+            grgs,
+            _UP,
+            dtype=dtype,
+            haploid=haploid,
             miss_values=miss_values,
             mutation_filter=mutation_filter,
             sample_filter=sample_filter,
@@ -867,18 +938,28 @@ class MultiCuPyXXTOperator(LinearOperator):
         prev_miss_start = 0
         prev_max_mut = 0
         for g in grgs:
-            assert g.num_samples == grgs[0].num_samples, "All GRGs must use the same samples"
-            grg_mut_filt, skip = _build_per_grg_mut_filt(mutation_filter, prev_max_mut, g)
+            assert (
+                g.num_samples == grgs[0].num_samples
+            ), "All GRGs must use the same samples"
+            grg_mut_filt, skip = _build_per_grg_mut_filt(
+                mutation_filter, prev_max_mut, g
+            )
             if not skip:
-                effective_muts = len(grg_mut_filt) if grg_mut_filt is not None else g.num_mutations
+                effective_muts = (
+                    len(grg_mut_filt) if grg_mut_filt is not None else g.num_mutations
+                )
                 if miss_values is not None:
-                    grg_miss = miss_values[prev_miss_start:prev_miss_start + effective_muts]
+                    grg_miss = miss_values[
+                        prev_miss_start : prev_miss_start + effective_muts
+                    ]
                     prev_miss_start += effective_muts
                 else:
                     grg_miss = None
                 self.operators.append(
                     CuPyXXTOperator(
-                        g, dtype, haploid=haploid,
+                        g,
+                        dtype,
+                        haploid=haploid,
                         miss_values=grg_miss,
                         mutation_filter=grg_mut_filt,
                         sample_filter=sample_filter,
@@ -957,18 +1038,32 @@ class MultiCuPyStdXOperator(LinearOperator):
         assert len(grgs) >= 1, "Must provide at least one GRG"
         assert len(grgs) == len(freqs), "Must provide allele frequencies for every GRG"
         if isinstance(custom_variance, list):
-            assert len(custom_variance) == len(grgs), "custom_variance list must have one entry per GRG"
+            assert len(custom_variance) == len(
+                grgs
+            ), "custom_variance list must have one entry per GRG"
         self.direction = direction
         self.operators: List[CuPyStdXOperator] = []
         prev_max_mut = 0
         for i, (g, f) in enumerate(zip(grgs, freqs)):
-            assert g.num_samples == grgs[0].num_samples, "All GRGs must use the same samples"
-            grg_mut_filt, skip = _build_per_grg_mut_filt(mutation_filter, prev_max_mut, g)
-            grg_custom_var = custom_variance[i] if isinstance(custom_variance, list) else custom_variance
+            assert (
+                g.num_samples == grgs[0].num_samples
+            ), "All GRGs must use the same samples"
+            grg_mut_filt, skip = _build_per_grg_mut_filt(
+                mutation_filter, prev_max_mut, g
+            )
+            grg_custom_var = (
+                custom_variance[i]
+                if isinstance(custom_variance, list)
+                else custom_variance
+            )
             if not skip:
                 self.operators.append(
                     CuPyStdXOperator(
-                        g, direction, f, dtype, haploid=haploid,
+                        g,
+                        direction,
+                        f,
+                        dtype,
+                        haploid=haploid,
                         mutation_filter=grg_mut_filt,
                         sample_filter=sample_filter,
                         alpha=alpha,
@@ -979,9 +1074,15 @@ class MultiCuPyStdXOperator(LinearOperator):
         self._output_device = self.operators[0]._device
         self.scheduler = _wrap_grg(grgs[0]).make_scheduler(grgs, threads)
         if direction == _UP:
-            shape = (self.operators[0].shape[0], sum(op.shape[1] for op in self.operators))
+            shape = (
+                self.operators[0].shape[0],
+                sum(op.shape[1] for op in self.operators),
+            )
         else:
-            shape = (sum(op.shape[0] for op in self.operators), self.operators[0].shape[1])
+            shape = (
+                sum(op.shape[0] for op in self.operators),
+                self.operators[0].shape[1],
+            )
         super().__init__(dtype=dtype, shape=shape)
 
     def _matmat_helper(self, other_matrix, direction, op_method):
@@ -995,11 +1096,13 @@ class MultiCuPyStdXOperator(LinearOperator):
                 # axes of each sub-operator depend on self.direction (UP exposes
                 # shape (N, M_i); DOWN exposes shape (M_i, N)).
                 op_muts = (
-                    (lambda op: op.shape[0]) if self.direction == _DOWN
+                    (lambda op: op.shape[0])
+                    if self.direction == _DOWN
                     else (lambda op: op.shape[1])
                 )
                 n_rows = (
-                    self.operators[0].shape[1] if self.direction == _DOWN
+                    self.operators[0].shape[1]
+                    if self.direction == _DOWN
                     else self.operators[0].shape[0]
                 )
                 parts = []
@@ -1012,7 +1115,9 @@ class MultiCuPyStdXOperator(LinearOperator):
                     sub = other_matrix[start:end, :]
                     with cuda.Device(op._device):
                         sub = _xdev_asarray(sub)
-                    futures.append(self.scheduler.submit(op.grg, op_method, op, sub, part))
+                    futures.append(
+                        self.scheduler.submit(op.grg, op_method, op, sub, part)
+                    )
                     start = end
                 for f in futures:
                     f.result()
@@ -1022,7 +1127,8 @@ class MultiCuPyStdXOperator(LinearOperator):
                 return result
             else:
                 op_rows = (
-                    (lambda op: op.shape[0]) if self.direction == _DOWN
+                    (lambda op: op.shape[0])
+                    if self.direction == _DOWN
                     else (lambda op: op.shape[1])
                 )
                 total_rows = sum(op_rows(op) for op in self.operators)
@@ -1035,7 +1141,9 @@ class MultiCuPyStdXOperator(LinearOperator):
                     with cuda.Device(op._device):
                         op_input = _xdev_asarray(other_matrix)
                     futures.append(
-                        self.scheduler.submit(op.grg, op_method, op, op_input, out_slice)
+                        self.scheduler.submit(
+                            op.grg, op_method, op, op_input, out_slice
+                        )
                     )
                     start = end
                 for f in futures:
@@ -1045,7 +1153,9 @@ class MultiCuPyStdXOperator(LinearOperator):
                 return output
 
     def _matmat(self, other_matrix):
-        return self._matmat_helper(other_matrix, self.direction, CuPyStdXOperator._matmat)
+        return self._matmat_helper(
+            other_matrix, self.direction, CuPyStdXOperator._matmat
+        )
 
     def _rmatmat(self, other_matrix):
         return self._matmat_helper(
@@ -1083,7 +1193,11 @@ class MultiCuPyStdXTXOperator(LinearOperator):
         custom_variance: Optional[numpy.ndarray] = None,
     ):
         self.std_x_op = MultiCuPyStdXOperator(
-            grgs, _UP, freqs, dtype=dtype, haploid=haploid,
+            grgs,
+            _UP,
+            freqs,
+            dtype=dtype,
+            haploid=haploid,
             mutation_filter=mutation_filter,
             sample_filter=sample_filter,
             threads=threads,
@@ -1143,17 +1257,30 @@ class MultiCuPyStdXXTOperator(LinearOperator):
         assert len(grgs) >= 1, "Must provide at least one GRG"
         assert len(grgs) == len(freqs), "Must provide allele frequencies for every GRG"
         if isinstance(custom_variance, list):
-            assert len(custom_variance) == len(grgs), "custom_variance list must have one entry per GRG"
+            assert len(custom_variance) == len(
+                grgs
+            ), "custom_variance list must have one entry per GRG"
         self.operators: List[CuPyStdXXTOperator] = []
         prev_max_mut = 0
         for i, (g, f) in enumerate(zip(grgs, freqs)):
-            assert g.num_samples == grgs[0].num_samples, "All GRGs must use the same samples"
-            grg_mut_filt, skip = _build_per_grg_mut_filt(mutation_filter, prev_max_mut, g)
-            grg_custom_var = custom_variance[i] if isinstance(custom_variance, list) else custom_variance
+            assert (
+                g.num_samples == grgs[0].num_samples
+            ), "All GRGs must use the same samples"
+            grg_mut_filt, skip = _build_per_grg_mut_filt(
+                mutation_filter, prev_max_mut, g
+            )
+            grg_custom_var = (
+                custom_variance[i]
+                if isinstance(custom_variance, list)
+                else custom_variance
+            )
             if not skip:
                 self.operators.append(
                     CuPyStdXXTOperator(
-                        g, f, dtype, haploid=haploid,
+                        g,
+                        f,
+                        dtype,
+                        haploid=haploid,
                         mutation_filter=grg_mut_filt,
                         sample_filter=sample_filter,
                         alpha=alpha,
@@ -1170,7 +1297,8 @@ class MultiCuPyStdXXTOperator(LinearOperator):
         n, k = self.shape[0], other_matrix.shape[1]
         with _nvtx("MultiStdXXTOp_matmat"):
             active = [
-                (i, op) for i, op in enumerate(self.operators)
+                (i, op)
+                for i, op in enumerate(self.operators)
                 if skip_op_idx is None or i != skip_op_idx
             ]
             if not active:
@@ -1214,7 +1342,7 @@ class MultiCuPyStdXXTOperator(LinearOperator):
 
     def matvec_loco(self, v, *, exclude_op_idx: Optional[int] = None):
         """Compute sum_{i != exclude_op_idx} X_i X_i^T @ v in parallel on GPU."""
-        was_vec = (v.ndim == 1)
+        was_vec = v.ndim == 1
         if was_vec:
             with cuda.Device(self._output_device):
                 v_col = xp.asarray(v).reshape(-1, 1)

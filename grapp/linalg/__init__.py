@@ -194,43 +194,40 @@ def get_eig_pcs(
     """
     # Route everything through the backend-agnostic operator selector so this works for both the
     # NumPy (GRGCalculator) and CuPy (GRGSpMVCalculator) backends.
-    is_list = isinstance(grgs, list)
-    grg_list = [_wrap_grg(g) for g in grgs] if is_list else None
-    grg = None if is_list else _wrap_grg(grgs)
-    repr_grg = grg_list[0] if is_list else grg
+    grg_list = (
+        [_wrap_grg(g) for g in grgs] if isinstance(grgs, list) else [_wrap_grg(grgs)]
+    )
+    repr_grg = grg_list[0]
 
-    freq_fn = repr_grg.get_operator("freq", standardized=True)
     eigsh_fn = repr_grg.get_operator("eigsh", standardized=True)
-    to_numpy = repr_grg.get_operator("to_numpy", standardized=True)
-    from_numpy = repr_grg.get_operator("from_numpy", standardized=True)
     op_name = "XTX" if do_xtx else "XXT"
 
     freqs: Union[List[numpy.typing.NDArray], numpy.typing.NDArray]
-    if is_list:
+    if len(grg_list) > 1:
         executor = concurrent.futures.ThreadPoolExecutor(threads)
-        futures = [executor.submit(freq_fn, grg) for grg in grg_list]
+        futures = [executor.submit(_allele_frequencies, grg) for grg in grg_list]
         freqs = [f.result() for f in futures]
         op = repr_grg.get_multi_operator(op_name, standardized=True)(
             grg_list, freqs, haploid=False, threads=threads, **op_kwargs
         )
     else:
-        freqs = freq_fn(grg, adjust_missing=True)
+        assert len(grg_list) > 0
+        freqs = _allele_frequencies(grg_list[0], adjust_missing=True)
         op = repr_grg.get_operator(op_name, standardized=True)(
-            grg, freqs, haploid=False, **op_kwargs
+            grg_list[0], freqs, haploid=False, **op_kwargs
         )
     if verbose:
         what = "variants" if do_xtx else "individuals"
         print(f"Running eigen decomposition on {op.shape[0]} {what}")
 
     eigen_values, eigen_vectors = eigsh_fn(op, k=k, which="LM", v0=init_vector, tol=tol)
-    eigen_values, eigen_vectors = to_numpy(eigen_values), to_numpy(eigen_vectors)
     sort_by_eigvalues(eigen_values, eigen_vectors)
     assert eigen_vectors.real.dtype == numpy.float64
     if not do_xtx:
         return eigen_vectors, eigen_values, None
 
     # If we did X^TX then we need to get the PC scores by performing one more product
-    if is_list:
+    if len(grg_list) > 1:
         pc_op = repr_grg.get_multi_operator("X", standardized=True)(
             grg_list,
             pygrgl.TraversalDirection.UP,
@@ -241,16 +238,15 @@ def get_eig_pcs(
         )
     else:
         pc_op = repr_grg.get_operator("X", standardized=True)(
-            grg,
+            grg_list[0],
             pygrgl.TraversalDirection.UP,
             freqs,  # type: ignore
             haploid=False,
             **op_kwargs,
         )
-    
+
     PC_scores = (
-        to_numpy(pc_op._matmat(from_numpy(eigen_vectors.real)))
-        / numpy.sqrt(eigen_values.real)[None, :]
+        pc_op._matmat(eigen_vectors.real) / numpy.sqrt(eigen_values.real)[None, :]
     )
     return PC_scores, eigen_values, eigen_vectors
 
@@ -266,7 +262,7 @@ def PCs(
     threads: int = 1,
     init_vector: Optional[numpy.typing.NDArray] = None,
     tol: float = 0,
-    include_eig_val: bool = False
+    include_eig_val: bool = False,
 ):
     """
     Get the principal components for each sample corresponding to the first :math:`k` eigenvectors from a GRG.

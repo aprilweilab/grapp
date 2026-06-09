@@ -3,6 +3,7 @@ import pygrgl
 import numpy
 import threading
 import concurrent.futures
+import contextlib
 from typing import Optional, Union, Dict, Callable, List, Any
 
 try:
@@ -10,16 +11,20 @@ try:
 except ImportError:
     pygrgl_spmv = None  # typing: ignore
 
+try:
+    import cupy
+except ImportError:
+    cupy = None  # typing: ignore
+
 
 def _scipy_operator_table() -> Dict[tuple, Callable]:
     # Lazy import to avoid a circular import: grapp.linalg and grapp.util both import
     # grapp.grg_calculator. Keys are (op, standardized, multi). "X" and "XT" share a class
     # (distinguished by the direction passed to the constructor). The non-standardized multi-XXT
-    # operator is absent. "FREQ" maps to the allele-frequency function (not a LinearOperator),
-    # "EIGSH" to the sparse symmetric eigensolver, and "TO_NUMPY"/"FROM_NUMPY" to host<->backend
-    # array converters (no-ops here since the SciPy backend already uses numpy arrays).
+    # operator is absent. "EIGSH" maps to the sparse symmetric eigensolver.
+    # All interfaces take numpy arrays and return numpy arrays, conversion to/from cupy arrays
+    # should be done internally!
     from grapp.linalg import ops_scipy as m
-    from grapp.util.simple import allele_frequencies
     from scipy.sparse.linalg import eigsh
 
     return {
@@ -38,36 +43,28 @@ def _scipy_operator_table() -> Dict[tuple, Callable]:
         ("XT", True, True): m.MultiSciPyStdXOperator,
         ("XTX", True, True): m.MultiSciPyStdXTXOperator,
         ("XXT", True, True): m.MultiSciPyStdXXTOperator,
-        ("FREQ", False, False): allele_frequencies,
-        ("FREQ", True, False): allele_frequencies,
         ("EIGSH", False, False): eigsh,
         ("EIGSH", True, False): eigsh,
-        ("TO_NUMPY", False, False): numpy.asarray,
-        ("TO_NUMPY", True, False): numpy.asarray,
-        ("FROM_NUMPY", False, False): numpy.asarray,
-        ("FROM_NUMPY", True, False): numpy.asarray,
     }
 
 
 def _cupy_operator_table() -> Dict[tuple, Callable]:
-    # Lazy import; CuPy is only available when the GPU stack is installed.
-    import cupy
+    assert (
+        cupy is not None
+    ), "cupy not installed; try 'pip install cupy' or use a different backend"
     from grapp.linalg import ops_cupy as m
-    from grapp.util.simple import allele_frequencies_cupy
     from cupyx.scipy.sparse.linalg import eigsh
 
-    def _to_numpy(arr):
-        # Sync the whole device so all in-flight kernels producing ``arr`` are
-        # complete before it is read back to the host.
-        cupy.cuda.Device().synchronize()
-        return cupy.asnumpy(arr)
+    def _eigsh(A, **kwargs):
+        def _convert_if_present(kwargs, key):
+            if key in kwargs:
+                kwargs[key] = cupy.asarray(kwargs[key])
 
-    def _from_numpy(arr):
-        # Upload to the device, then sync so the H2D copy is guaranteed complete
-        # before the array is consumed (possibly on another thread/stream).
-        out = cupy.asarray(arr)
+        _convert_if_present(kwargs, "M")
+        _convert_if_present(kwargs, "v0")
+        eigval, eigvect = eigsh(cupy.asarray(A), **kwargs)
         cupy.cuda.Device().synchronize()
-        return out
+        return cupy.asnumpy(eigval), cupy.asnumpy(eigvect)
 
     return {
         ("X", False, False): m.CuPyXOperator,
@@ -86,18 +83,14 @@ def _cupy_operator_table() -> Dict[tuple, Callable]:
         ("XT", True, True): m.MultiCuPyStdXOperator,
         ("XTX", True, True): m.MultiCuPyStdXTXOperator,
         ("XXT", True, True): m.MultiCuPyStdXXTOperator,
-        ("FREQ", False, False): allele_frequencies_cupy,
-        ("FREQ", True, False): allele_frequencies_cupy,
-        ("EIGSH", False, False): eigsh,
-        ("EIGSH", True, False): eigsh,
-        ("TO_NUMPY", False, False): _to_numpy,
-        ("TO_NUMPY", True, False): _to_numpy,
-        ("FROM_NUMPY", False, False): _from_numpy,
-        ("FROM_NUMPY", True, False): _from_numpy,
+        ("EIGSH", False, False): _eigsh,
+        ("EIGSH", True, False): _eigsh,
     }
 
 
-def _select_operator_cls(backend: str, op: str, standardized: bool, multi: bool) -> Callable:
+def _select_operator_cls(
+    backend: str, op: str, standardized: bool, multi: bool
+) -> Callable:
     """
     Map (op, standardized, multi) to a LinearOperator class (or, for the non-matrix ops, a callable)
     for the given backend, hiding the SciPy/CuPy choice from downstream code. Returns the
@@ -228,7 +221,9 @@ class GRGCalcInterface(ABC):
         pass
 
     @abstractmethod
-    def make_scheduler(self, grgs: List["GRGCalcInterface"], workers: int = 1):
+    def make_scheduler(
+        self, grgs: List["GRGCalcInterface"], workers: int = 1, gated: bool = False
+    ):
         pass
 
     @abstractmethod
@@ -248,6 +243,10 @@ class GRGCalcInterface(ABC):
         """
         Like :meth:`get_operator`, but returns the multi-GRG ("Multi...") LinearOperator class.
         """
+        pass
+
+    @abstractmethod
+    def device_context(self):
         pass
 
 
@@ -294,7 +293,7 @@ class GRGGatedSched(GRGScheduler):
     def _gated_operation(self, operation, *args, **kwargs):
         self._start_gate.wait()
         return operation(*args, **kwargs)
-    
+
     def start(self) -> None:
         self._start_gate.set()
 
@@ -304,7 +303,9 @@ class GRGGatedSched(GRGScheduler):
         self._start_gate.clear()
 
     def submit(self, grg: GRGCalcInterface, operation, *args, **kwargs) -> GRGWaitable:
-        return GRGThreadOp(self.executor.submit(self._gated_operation, operation, *args, **kwargs))
+        return GRGThreadOp(
+            self.executor.submit(self._gated_operation, operation, *args, **kwargs)
+        )
 
 
 class GRGCalculator(GRGCalcInterface):
@@ -375,7 +376,9 @@ class GRGCalculator(GRGCalcInterface):
             miss=miss,
         )
 
-    def make_scheduler(self, grgs: List["GRGCalcInterface"], workers: int = 1):
+    def make_scheduler(
+        self, grgs: List["GRGCalcInterface"], workers: int = 1, gated: bool = False
+    ):
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
         return GRGThreadSched(executor)
 
@@ -384,6 +387,9 @@ class GRGCalculator(GRGCalcInterface):
 
     def get_multi_operator(self, op: str, standardized: bool) -> Callable:
         return _select_operator_cls("SciPy", op, standardized, multi=True)
+
+    def device_context(self):
+        return contextlib.suppress()
 
 
 class GRGSpMVCalculator(GRGCalcInterface):
@@ -397,7 +403,7 @@ class GRGSpMVCalculator(GRGCalcInterface):
     @property
     def device(self) -> int | None:
         return getattr(self._op, "device", None)
-    
+
     @property
     def use_cupy(self) -> bool:
         return getattr(self._op, "use_cupy", False)
@@ -457,16 +463,25 @@ class GRGSpMVCalculator(GRGCalcInterface):
         init: Optional[Union[str, numpy.typing.NDArray]] = None,
         miss: Optional[numpy.typing.NDArray] = None,
     ) -> numpy.typing.NDArray:
-        return self._op.matmul(
-            input,
+        mm_input = cupy.asarray(input) if self.use_cupy else input
+        mm_init = cupy.asarray(init) if self.use_cupy else init
+        mm_miss = cupy.asarray(miss) if self.use_cupy else miss
+        result = self._op.matmul(
+            mm_input,
             self._convert_dir(direction),
             emit_all_nodes=emit_all_nodes,
             by_individual=by_individual,
-            init=init,
-            miss=miss,
+            init=mm_init,
+            miss=mm_miss,
         )
+        if self.use_cupy:
+            cupy.cuda.Device().synchronize()
+            result = cupy.asnumpy()
+        return result
 
-    def make_scheduler(self, grgs: List["GRGCalcInterface"], workers: int = 1, gated: bool = False):
+    def make_scheduler(
+        self, grgs: List["GRGCalcInterface"], workers: int = 1, gated: bool = False
+    ):
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
         return GRGGatedSched(executor=executor, gated=gated)
 
@@ -477,6 +492,9 @@ class GRGSpMVCalculator(GRGCalcInterface):
     def get_multi_operator(self, op: str, standardized: bool) -> Callable:
         backend = "CuPy" if self.use_cupy else "SciPy"
         return _select_operator_cls(backend, op, standardized, multi=True)
+
+    def device_context(self):
+        return cupy.cuda.Device(self.device) if self.use_cupy else contextlib.suppress()
 
 
 def load_grg_calculator(filename: str) -> GRGCalcInterface:
@@ -491,11 +509,11 @@ def load_grg_calculator(filename: str) -> GRGCalcInterface:
         ),
     }
     from grapp.util.exceptions import UserInputError
+
     if pygrgl_spmv is not None:
+
         def _raise_spmv_error(filename: str) -> GRGCalcInterface:
-            raise UserInputError(
-                "grg_spmv files cannot be loaded directly."
-            )
+            raise UserInputError("grg_spmv files cannot be loaded directly.")
 
         extension_to_loader[".grg_spmv"] = _raise_spmv_error
     for ext, loader in extension_to_loader.items():
