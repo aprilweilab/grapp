@@ -1,26 +1,27 @@
-from typing import Union, Optional, List, Callable, TextIO
-from multiprocessing import Pool
+from typing import Union, Optional, List, Callable, TextIO, Dict, Any
 from pyigd.extra import (
     igd_merge,
     collect_next_site,
 )
 from contextlib import contextmanager
-from grapp.util.filter import split_by_ranges
 from grapp.cli.util import load_immutable
+from grapp.util.parallel import split_and_run
 
 import numpy
 import os
 import pygrgl
 import pyigd
-import shutil
 import sys
 import tempfile
 
 
-# Helper that converts a single GRG into a single IGD
+# Helper operation that converts a single GRG into a single IGD
 def _grg2igd(
-    grg_or_file: Union[str, pygrgl.GRG], igd_prefix: str, batch_size: int
+    grg_or_file: Union[str, pygrgl.GRG],
+    context: Dict[str, Any],
 ) -> str:
+    igd_prefix = os.path.join(context["dir"], "part_")
+    batch_size = context["batch_size"]
     if isinstance(grg_or_file, str):
         grg = load_immutable(grg_or_file, load_up_edges=False)
     else:
@@ -104,11 +105,9 @@ def export_igd(
     """
     Export a GRG to a phased IGD file, which is a sparse matrix representation of
     the same data. An IGD will almost always be larger than a GRG, but it can
-    be useful because:
-    1. The rows are variants, giving fast access to specific variants and their
-    list of samples. Instead of having traverse many graph edges to get the
+    be useful because the rows are variants, giving fast access to specific variants
+    and their list of samples. Instead of having traverse many graph edges to get the
     sample list for a variant, you can just read the row from the IGD.
-    2. Conversion to other standard formats is very fast, for example .vcf.gz
 
     :param grg_or_filename: The GRG to convert, either as a pygrgl.GRG or the
         filename of a GRG.
@@ -136,10 +135,6 @@ def export_igd(
         GRG, plus this is how we parallelize the conversion. Default: 5MB.
     :type split_threshold: int
     """
-    if verbose:
-
-        def logv(msg):
-            print(msg, file=sys.stderr)
 
     if batch_size == "auto":
         batch_size = 100  # TODO: improve this by measuring available RAM?
@@ -148,49 +143,34 @@ def export_igd(
         temp_dir
     ), f"Provided temp_dir {temp_dir} does not exist."
 
-    with _get_temp_dir_context(temp_dir)() as tmpdirname:
-        if isinstance(grg_or_filename, str):
-            grg = load_immutable(grg_or_filename, load_up_edges=False)
-            grg_filename = grg_or_filename
-        else:
-            grg = grg_or_filename
-            grg_filename = os.path.join(tmpdirname, "input.grg")
-            pygrgl.save_grg(grg, grg_filename)
+    context = {
+        "batch_size": batch_size,
+    }
 
-        split_ranges = []
-        for start in range(grg.bp_range[0], grg.bp_range[1], split_threshold):
-            split_ranges.append((start, start + split_threshold))
-        if len(split_ranges) == 1:
-            logv(f"Converting single GRG part to {out_filename}...")
-            igd_filename = _grg2igd(grg, out_filename, batch_size)
-            shutil.move(igd_filename, out_filename)
-        else:
+    def _merge_igds(
+        unused: Union[str, pygrgl.GRG],
+        filename_list: List[str],
+        context: Dict[str, Any],
+    ):
+        if no_merge:
+            return
+        in_files = [open(fn, "rb") for fn in filename_list]
+        try:
+            in_readers = [pyigd.IGDReader(f) for f in in_files]
+            igd_merge(out_filename, in_readers, True)
+        finally:
+            list(map(lambda f: f.close(), in_files))
 
-            def merge(filename_list: List[str]):
-                if no_merge:
-                    return
-                in_files = [open(fn, "rb") for fn in filename_list]
-                try:
-                    in_readers = [pyigd.IGDReader(f) for f in in_files]
-                    igd_merge(out_filename, in_readers, True)
-                finally:
-                    list(map(lambda f: f.close(), in_files))
-
-            logv(f"Using temporary directory {tmpdirname}.")
-            logv(f"Splitting GRG into {len(split_ranges)} parts..")
-            grg_parts = split_by_ranges(
-                grg_filename, split_ranges, jobs, out_dir=tmpdirname
-            )
-            arguments = [
-                (part, os.path.join(tmpdirname, "part_"), batch_size)
-                for part in filter(os.path.isfile, grg_parts)
-            ]
-            assert len(arguments) > 0, "No GRG parts found"
-            logv("Converting GRG parts to IGD files...")
-            with Pool(jobs) as pool:
-                igd_parts = pool.starmap(_grg2igd, arguments)
-            logv(f"Merging {len(igd_parts)} parts into single IGD {out_filename}...")
-            merge(igd_parts)
+    split_and_run(
+        grg_or_filename,
+        _grg2igd,
+        _merge_igds,
+        context,
+        jobs=jobs,
+        temp_dir=temp_dir,
+        split_threshold=split_threshold,
+        verbose=verbose,
+    )
 
 
 def igd_to_vcf(
@@ -200,7 +180,7 @@ def igd_to_vcf(
     buffer_lines: int = 1000,
 ):
     """
-    WARNING: Incredibly slow for huge datasets!
+    WARNING: Incredibly slow for large datasets!
 
     Convert and IGD file to VCF.  General usage should to either use a Gzip file
     object for the output, or stdout and then pipe the results to bgzip.
@@ -336,7 +316,8 @@ def export_vcf(
     verbose: bool = False,
 ):
     """
-    WARNING: Incredibly slow for huge datasets!
+    WARNING: Incredibly slow for large datasets! You should only use this for exporting subsets
+    of GRGs (e.g., after filtering) and even then it is slow.
 
     Export a GRG to a phased VCF file. Usage should to either use a Gzip file
     object for the output, or stdout and then pipe the results to bgzip.

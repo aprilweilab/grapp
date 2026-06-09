@@ -94,3 +94,13 @@ Simple Calculations
    :members:
    :undoc-members:
    :show-inheritance:
+
+Parallelized Operations
+~~~~~~~~~~~~~~~~~~~~~~~
+
+See also "Linear Operators for Multiple GRGs", which is how mathematical operations can be parallelized.
+
+.. automodule:: grapp.util.parallel
+   :members:
+   :undoc-members:
+   :show-inheritance:
