@@ -97,17 +97,18 @@ def allele_counts(
         ), "Duplicate IDs in sample_filter"
         assert len(sample_filter) <= grg.num_samples
     kwargs = {}
-    if return_missing:
-        miss_counts = numpy.zeros((1, grg.num_mutations), dtype=numpy.int32)
-        kwargs["miss"] = miss_counts
-    else:
-        miss_counts = None
-    if sample_filter is not None:
-        input_mat = numpy.zeros((1, grg.num_samples), dtype=numpy.int32)
-        input_mat[:, sample_filter] = 1
-    else:
-        input_mat = numpy.ones((1, grg.num_samples), dtype=numpy.int32)
-    acounts = grg.matmul(input_mat, pygrgl.TraversalDirection.UP, **kwargs)[0]  # type: ignore
+    with grg.device_context():
+        if return_missing:
+            miss_counts = numpy.zeros((1, grg.num_mutations), dtype=numpy.int32)
+            kwargs["miss"] = miss_counts
+        else:
+            miss_counts = None
+        if sample_filter is not None:
+            input_mat = numpy.zeros((1, grg.num_samples), dtype=numpy.int32)
+            input_mat[:, sample_filter] = 1
+        else:
+            input_mat = numpy.ones((1, grg.num_samples), dtype=numpy.int32)
+        acounts = grg.matmul(input_mat, pygrgl.TraversalDirection.UP, **kwargs)[0]  # type: ignore
     if miss_counts is not None:
         miss_counts = miss_counts[0]
         assert miss_counts is not None
@@ -135,7 +136,7 @@ def allele_frequencies(
     :rtype: numpy.ndarray
     """
     grg = _wrap_grg(grg)
-    with numpy.errstate(divide="raise"):
+    with grg.device_context():
         if adjust_missing:
             acounts, miss_counts = allele_counts(
                 grg, return_missing=True, sample_filter=sample_filter
@@ -181,30 +182,31 @@ def variance(
     :rtype: numpy.ndarray
     """
     grg = _wrap_grg(grg)
-    mult_const = 1 if haploid else grg.ploidy
-    acount, miss_count = allele_counts(
-        grg, return_missing=True, sample_filter=sample_filter
-    )
-    n_j = (
-        (grg.num_samples - miss_count)
-        if adjust_missing
-        else numpy.full(grg.num_mutations, grg.num_samples)
-    )
-    afreq = _div_or_default(acount, n_j, 0.0)
-    if dist == _GenotypeDist.SAMPLE.value:
-        assert (
-            not haploid and grg.ploidy == 2
-        ), "The sample-based variance can only be computed for diploids"
-        # diag(X^T @ X) / n = Var[X] + E[X]^2
-        # --> Var[X] = (diag(X^T @ X) / n) - E[X]^2
-        XX = grg.matmul(
-            numpy.ones((1, grg.num_samples), dtype=numpy.int32),
-            pygrgl.TraversalDirection.UP,
-            init="xtx",
-        )[0]
-        return (XX / grg.num_individuals) - ((mult_const * afreq) ** 2)
-    else:
-        return mult_const * afreq * (1.0 - afreq)
+    with grg.device_context():
+        mult_const = 1 if haploid else grg.ploidy
+        acount, miss_count = allele_counts(
+            grg, return_missing=True, sample_filter=sample_filter
+        )
+        n_j = (
+            (grg.num_samples - miss_count)
+            if adjust_missing
+            else numpy.full(grg.num_mutations, grg.num_samples)
+        )
+        afreq = _div_or_default(acount, n_j, 0.0)
+        if dist == _GenotypeDist.SAMPLE.value:
+            assert (
+                not haploid and grg.ploidy == 2
+            ), "The sample-based variance can only be computed for diploids"
+            # diag(X^T @ X) / n = Var[X] + E[X]^2
+            # --> Var[X] = (diag(X^T @ X) / n) - E[X]^2
+            XX = grg.matmul(
+                numpy.ones((1, grg.num_samples), dtype=numpy.int32),
+                pygrgl.TraversalDirection.UP,
+                init="xtx",
+            )[0]
+            return (XX / grg.num_individuals) - ((mult_const * afreq) ** 2)
+        else:
+            return mult_const * afreq * (1.0 - afreq)
 
 
 def _star_snphwe_pygrgl(arglist):

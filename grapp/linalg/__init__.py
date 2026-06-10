@@ -15,7 +15,7 @@ from scipy.sparse.linalg import eigsh
 from typing import Tuple, List, Dict, Any, Union, Optional
 
 from grapp.util import allele_frequencies as _allele_frequencies
-from grapp.grg_calculator import GRGCalcInterface as _GRGCalcInterface
+from grapp.grg_calculator import GRGCalcInterface as _GRGCalcInterface, _wrap_grg
 
 # Everything below is imported so that users can import them via grapp.linalg
 from grapp.linalg.ops_scipy import (  # noqa: F401
@@ -159,10 +159,17 @@ def get_eig_pcs(
     threads: int = 1,
     verbose: bool = True,
     do_xtx: bool = False,
+    init_vector: Optional[numpy.typing.NDArray] = None,
+    tol: float = 0,
 ) -> Tuple[NDArray, NDArray, Optional[NDArray]]:
     """
     Get the principal components for each sample corresponding to the first :math:`k` eigenvectors from a GRG,
     using an iterative eigenvector decomposition method.
+
+    The computation is routed through the backend-agnostic operator selector on
+    :class:`~grapp.grg_calculator.GRGCalcInterface`, so it runs on either the NumPy/CPU backend
+    (``GRGCalculator``) or the CuPy/GPU backend (``GRGSpMVCalculator``) depending on the GRG passed
+    in. Regardless of backend, the returned arrays are host NumPy arrays.
 
     :param grgs: The GRG or list of GRGs to perform PCA on.
     :type grgs: Union[pygrgl.GRG, List[pygrgl.GRG]]
@@ -174,45 +181,55 @@ def get_eig_pcs(
     :param threads: Maximum number of threads to use. At most len(grgs) tasks can be done in parallel.
     :type threads: int
     :param verbose: Emit information on stderr.
-    :type verboose: bool
+    :type verbose: bool
     :param do_xtx: Use eigsh(X^TX) instead of the default eigsh(XX^T). Default: False.
     :type do_xtx: bool
+    :param init_vector: Optional starting vector for the iterative solver, passed to eigsh as ``v0``.
+    :type init_vector: Optional[numpy.typing.NDArray]
+    :param tol: Convergence tolerance for the iterative solver, passed to eigsh. 0 means machine
+        precision. Default: 0.
+    :type tol: float
     :return: A pair (PC_scores, eigen_values) where each is a numpy array.
     :rtype: Tuple[numpy.ndarray, numpy.ndarray, Optional[numpy.ndarray]]
     """
+    # Route everything through the backend-agnostic operator selector so this works for both the
+    # NumPy (GRGCalculator) and CuPy (GRGSpMVCalculator) backends.
+    grg_list = (
+        [_wrap_grg(g) for g in grgs] if isinstance(grgs, list) else [_wrap_grg(grgs)]
+    )
+    repr_grg = grg_list[0]
+
+    eigsh_fn = repr_grg.get_operator("eigsh", standardized=True)
+    op_name = "XTX" if do_xtx else "XXT"
+
     freqs: Union[List[numpy.typing.NDArray], numpy.typing.NDArray]
-    if isinstance(grgs, list):
+    if len(grg_list) > 1:
         executor = concurrent.futures.ThreadPoolExecutor(threads)
-        futures = [executor.submit(_allele_frequencies, grg) for grg in grgs]
+        futures = [executor.submit(_allele_frequencies, grg) for grg in grg_list]
         freqs = [f.result() for f in futures]
-        if do_xtx:
-            op = MultiSciPyStdXTXOperator(
-                grgs, freqs, haploid=False, threads=threads, **op_kwargs
-            )
-        else:
-            op = MultiSciPyStdXXTOperator(
-                grgs, freqs, haploid=False, threads=threads, **op_kwargs
-            )
+        op = repr_grg.get_multi_operator(op_name, standardized=True)(
+            grg_list, freqs, haploid=False, threads=threads, **op_kwargs
+        )
     else:
-        freqs = _allele_frequencies(grgs, adjust_missing=True)
-        if do_xtx:
-            op = SciPyStdXTXOperator(grgs, freqs, haploid=False, **op_kwargs)
-        else:
-            op = SciPyStdXXTOperator(grgs, freqs, haploid=False, **op_kwargs)
+        assert len(grg_list) > 0
+        freqs = _allele_frequencies(grg_list[0], adjust_missing=True)
+        op = repr_grg.get_operator(op_name, standardized=True)(
+            grg_list[0], freqs, haploid=False, **op_kwargs
+        )
     if verbose:
         what = "variants" if do_xtx else "individuals"
         print(f"Running eigen decomposition on {op.shape[0]} {what}")
 
-    eigen_values, eigen_vectors = eigsh(op, k=k, which="LM")
+    eigen_values, eigen_vectors = eigsh_fn(op, k=k, which="LM", v0=init_vector, tol=tol)
     sort_by_eigvalues(eigen_values, eigen_vectors)
     assert eigen_vectors.real.dtype == numpy.float64
     if not do_xtx:
         return eigen_vectors, eigen_values, None
 
     # If we did X^TX then we need to get the PC scores by performing one more product
-    if isinstance(grgs, list):
-        pc_op = MultiSciPyStdXOperator(
-            grgs,
+    if len(grg_list) > 1:
+        pc_op = repr_grg.get_multi_operator("X", standardized=True)(
+            grg_list,
             pygrgl.TraversalDirection.UP,
             freqs,  # type: ignore
             haploid=False,
@@ -220,14 +237,14 @@ def get_eig_pcs(
             **op_kwargs,
         )
     else:
-        pc_op = SciPyStdXOperator(
-            grgs,
+        pc_op = repr_grg.get_operator("X", standardized=True)(
+            grg_list[0],
             pygrgl.TraversalDirection.UP,
             freqs,  # type: ignore
             haploid=False,
             **op_kwargs,
         )
-    # ... and then scaling the result
+
     PC_scores = (
         pc_op._matmat(eigen_vectors.real) / numpy.sqrt(eigen_values.real)[None, :]
     )
@@ -243,6 +260,8 @@ def PCs(
     use_pro_pca: bool = False,
     sample_window: int = 1,
     threads: int = 1,
+    init_vector: Optional[numpy.typing.NDArray] = None,
+    tol: float = 0,
 ):
     """
     Get the principal components for each sample corresponding to the first :math:`k` eigenvectors from a GRG.
@@ -263,6 +282,11 @@ def PCs(
     :param threads: Number of threads to use. Will never use more than the number of input GRGs.
         Default: 1.
     :type threads: int
+    :param init_vector: Optional starting vector for the iterative solver, passed to eigsh as ``v0``.
+    :type init_vector: Optional[numpy.typing.NDArray]
+    :param tol: Convergence tolerance for the iterative solver, passed to eigsh. 0 means machine
+        precision. Default: 0.
+    :type tol: float
     :return: A pandas.DataFrame with a row per individual and a column per principal component. Or, if include_eig
         then a triple (dataframe, eigen values, eigen vectors), where eigen vectors are None unless use_pro_pca
         was True.
@@ -299,6 +323,8 @@ def PCs(
             threads=threads,
             op_kwargs={"mutation_filter": mutation_filter},
             do_xtx=include_eig,
+            init_vector=init_vector,
+            tol=tol,
         )
 
     colnames = [f"PC{i+1}" for i in range(PC_scores.shape[1])]
