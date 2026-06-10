@@ -415,7 +415,7 @@ class GRGSpMVCalculator(GRGCalcInterface):
         self._op = grg_spmv
 
     @property
-    def device(self) -> int | None:
+    def device(self) -> Optional[int]:
         return getattr(self._op, "device", None)
 
     @property
