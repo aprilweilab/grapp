@@ -262,7 +262,6 @@ def PCs(
     threads: int = 1,
     init_vector: Optional[numpy.typing.NDArray] = None,
     tol: float = 0,
-    include_eig_val: bool = False,
 ):
     """
     Get the principal components for each sample corresponding to the first :math:`k` eigenvectors from a GRG.
@@ -288,9 +287,6 @@ def PCs(
     :param tol: Convergence tolerance for the iterative solver, passed to eigsh. 0 means machine
         precision. Default: 0.
     :type tol: float
-    :param include_eig_val: When True (and include_eig is False), return a pair (DataFrame, eigen values)
-        instead of just the DataFrame. Default: False.
-    :type include_eig_val: bool
     :return: A pandas.DataFrame with a row per individual and a column per principal component. Or, if include_eig
         then a triple (dataframe, eigen values, eigen vectors), where eigen vectors are None unless use_pro_pca
         was True.
@@ -336,6 +332,4 @@ def PCs(
     df.index.name = "Individual"
     if include_eig:
         return df, eigen_values, eigen_vectors
-    if include_eig_val:
-        return df, eigen_values
     return df

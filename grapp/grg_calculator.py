@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+import functools
 import pygrgl
 import numpy
 import threading
@@ -88,6 +89,7 @@ def _cupy_operator_table() -> Dict[tuple, Callable]:
     }
 
 
+@functools.cache
 def _select_operator_cls(
     backend: str, op: str, standardized: bool, multi: bool
 ) -> Callable:
