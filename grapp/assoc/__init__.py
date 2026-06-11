@@ -116,11 +116,6 @@ def _computeDiagXTX(
     standardize: bool,
     sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
 ):
-    if not grg.has_individual_coals:
-        raise UserInputError(
-            "GRG does not have individual coalescences; try using the binomial approximation for variance"
-        )
-
     # diag(X^T @ X): for any standardized matrix with N rows, the diagonal will just be N
     if standardize:
         XX = n_j
@@ -128,6 +123,11 @@ def _computeDiagXTX(
         # diag(X^T @ X): for the non-standardized genotype matrix, GRG has a special initialization
         # method "xtx" which uses coalescence information to compute the diagonal in a single pass
         if dist == _GenotypeDist.SAMPLE.value:
+            if not grg.has_individual_coals:
+                raise UserInputError(
+                    "GRG does not have individual coalescences; try using the binomial approximation for variance"
+                )
+
             XX = grg.matmul(
                 numpy.ones((1, grg.num_samples), dtype=numpy.int32),
                 pygrgl.TraversalDirection.UP,
