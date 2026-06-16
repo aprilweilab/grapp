@@ -1,7 +1,7 @@
 """BOLT-LMM-inf output formatting and top-level driver.
 
 The math engine and the GRG-facing numeric computation (per-variant stats,
-association statistics) live in ``grapp.bolt.lmm_core``. This module holds the
+association statistics) live in ``grapp.assoc.bolt_inf_core``. This module holds the
 optional DataFrame annotation step (which needs per-variant ``get_mutation_by_id``
 metadata lookups) plus the ``bolt_lmm_inf`` orchestrator.
 """

@@ -1297,16 +1297,36 @@ class MultiCuPyStdXXTOperator(LinearOperator):
             prev_max_mut += g.num_mutations
         self._output_device = self.operators[0]._device
         self.scheduler = _wrap_grg(grgs[0]).make_scheduler(grgs, threads, gated=True)
+        # Operator indices to leave out of the next product (set via set_exclude).
+        self._exclude: set = set()
         n = self.operators[0].shape[0]
         super().__init__(dtype=dtype, shape=(n, n))
 
-    def _matmat(self, other_matrix, *, skip_op_idx: Optional[int] = None):
+    def set_exclude(self, exclude=None):
+        """Set which operator indices (chromosomes) to leave out of subsequent
+        products. Pass ``None`` or an empty list to include all chromosomes.
+        Returns self for chaining."""
+        if exclude is None:
+            self._exclude = set()
+        elif isinstance(exclude, int):
+            self._exclude = {int(exclude)}
+        else:
+            self._exclude = {int(i) for i in exclude}
+        for idx in self._exclude:
+            if idx < 0 or idx >= len(self.operators):
+                raise IndexError(
+                    f"exclude index {idx} out of range for "
+                    f"{len(self.operators)} operators"
+                )
+        return self
+
+    def _matmat(self, other_matrix):
         n, k = self.shape[0], other_matrix.shape[1]
         with _nvtx("MultiStdXXTOp_matmat"):
             active = [
                 (i, op)
                 for i, op in enumerate(self.operators)
-                if skip_op_idx is None or i != skip_op_idx
+                if i not in self._exclude
             ]
             if not active:
                 with cuda.Device(self._output_device):
@@ -1346,14 +1366,3 @@ class MultiCuPyStdXXTOperator(LinearOperator):
             with cuda.Device(self._output_device):
                 vect = _xdev_asarray(vect).reshape(-1, 1)
         return self._rmatmat(vect)
-
-    def matvec_loco(self, v, *, exclude_op_idx: Optional[int] = None):
-        """Compute sum_{i != exclude_op_idx} X_i X_i^T @ v in parallel on GPU."""
-        was_vec = v.ndim == 1
-        if was_vec:
-            with cuda.Device(self._output_device):
-                v_col = xp.asarray(v).reshape(-1, 1)
-        else:
-            v_col = v
-        result = self._matmat(v_col, skip_op_idx=exclude_op_idx)
-        return result[:, 0] if was_vec else result

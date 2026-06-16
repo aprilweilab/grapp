@@ -3,7 +3,7 @@ variance-component / calibration algorithm steps that operate purely through
 ``BoltLmmOps``.
 
 GRG-facing computation (per-variant stats, association statistics) and output
-formatting live in ``grapp.bolt.lmm`` alongside the ``bolt_lmm_inf`` driver.
+formatting live in ``grapp.assoc.bolt_lmm`` alongside the ``bolt_lmm_inf`` driver.
 """
 
 from __future__ import annotations
@@ -24,14 +24,9 @@ from scipy.special import erfc as _erfc
 import pygrgl
 
 from grapp.grg_calculator import GRGCalcInterface, GRGSpMVCalculator, _wrap_grg
-from grapp.linalg.ops_scipy import (
-    SciPyStdXOperator,
-    MultiSciPyStdXOperator,
-    MultiSciPyLOCOStdXXTOperator,
-)
 from grapp.util.simple import (
-    allele_counts, allele_counts_cupy,
-    allele_frequencies, allele_frequencies_cupy,
+    allele_counts,
+    allele_frequencies,
 )
 
 
@@ -629,11 +624,7 @@ class BoltVariantStatsArray(Sequence):
 class BoltLmmOps:
     """
     GRG-backed BOLT-LMM-inf linear algebra using grapp's standardized operators.
-
-    Accepts one GRG per chromosome for LOCO. Both K_all and LOCO variants are
-    served by a single Multi-XXT operator (``MultiSciPyLOCOStdXXTOperator`` for
-    SciPy, ``MultiCuPyStdXXTOperator`` for CuPy) that natively skips a
-    chromosome via ``matvec_loco(exclude_op_idx=...)``.
+    Accepts one GRG per chromosome for LOCO. 
     """
 
     def __init__(
@@ -688,7 +679,13 @@ class BoltLmmOps:
         active_freqs: List[np.ndarray] = []
         active_vars: List[np.ndarray] = []
 
-        # TODO: check if we need to parallel this
+        # Operator classes are chosen through the calculator's unified selector
+        # (get_operator / get_multi_operator), which picks the SciPy or CuPy
+        # backend itself.
+
+        rep_calc = _wrap_grg(grgs_list[0])
+        std_x_cls = rep_calc.get_operator("X", standardized=True)
+
         for (chrom, grg), stats in zip(self._chrom_grgs, self._chrom_stats):
             model_stats = stats
             self._model_stats_by_chrom[chrom] = model_stats
@@ -703,24 +700,17 @@ class BoltLmmOps:
             mcn2 = model_stats.mean_center_norm2
             var_c = mcn2 / float(self._n - 1)
 
-            freqs_c = allele_frequencies_cupy(grg) if self._is_cupy else allele_frequencies(grg)
+            freqs_c = allele_frequencies(grg)
 
             m_c = len(model_stats)
             self._m_proj += m_c
             self._m_proj_by_chrom[chrom] = m_c
             self._xfro2 += float(model_stats.x_norm2.sum())
 
-            if self._is_cupy:
-                from grapp.linalg.ops_cupy import CuPyStdXOperator
-                self._x_ops[chrom] = CuPyStdXOperator(
-                    grg, _UP, freqs_c,
-                    custom_variance=var_c,
-                )
-            else:
-                self._x_ops[chrom] = SciPyStdXOperator(
-                    grg, _UP, freqs_c,
-                    custom_variance=var_c,
-                )
+            self._x_ops[chrom] = std_x_cls(
+                grg, _UP, freqs_c,
+                custom_variance=var_c,
+            )
 
             self._chrom_to_op_idx[chrom] = len(active_grgs)
             active_grgs.append(grg)
@@ -730,35 +720,21 @@ class BoltLmmOps:
         if self._m_proj <= 0:
             raise ValueError("no eligible model variants")
 
-        if self._is_cupy:
-            from grapp.linalg.ops_cupy import MultiCuPyStdXXTOperator
-            self._k_all_op = MultiCuPyStdXXTOperator(
-                active_grgs, active_freqs,
-                custom_variance=active_vars,
-                threads=self._threads,
-            )
-        else:
-            self._k_all_op = MultiSciPyLOCOStdXXTOperator(
-                active_grgs, active_freqs,
-                custom_variance=active_vars,
-                threads=self._threads,
-            )
+        # K_all: multi-chromosome standardized XX^T with native LOCO via
+        # set_exclude (MultiSciPyStdXXTOperator / MultiCuPyStdXXTOperator).
+        self._k_all_op = rep_calc.get_multi_operator("XXT", standardized=True)(
+            active_grgs, active_freqs,
+            custom_variance=active_vars,
+            threads=self._threads,
+        )
 
         # Multi-chromosome standardized-X operator (sum_c X_c @ w_c) for batched
         # MC probe generation; the X analog of the K_all operator above.
-        if self._is_cupy:
-            from grapp.linalg.ops_cupy import MultiCuPyStdXOperator
-            self._x_all_op = MultiCuPyStdXOperator(
-                active_grgs, _UP, active_freqs,
-                custom_variance=active_vars,
-                threads=self._threads,
-            )
-        else:
-            self._x_all_op = MultiSciPyStdXOperator(
-                active_grgs, _UP, active_freqs,
-                custom_variance=active_vars,
-                threads=self._threads,
-            )
+        self._x_all_op = rep_calc.get_multi_operator("X", standardized=True)(
+            active_grgs, _UP, active_freqs,
+            custom_variance=active_vars,
+            threads=self._threads,
+        )
 
         return self
 
@@ -876,7 +852,14 @@ class BoltLmmOps:
             self._chrom_to_op_idx[exclude_chrom]
             if exclude_chrom is not None else None
         )
-        xxt_v = self._k_all_op.matvec_loco(v_proj, exclude_op_idx=exclude_idx)
+        # Select the left-out chromosome (sticky state on the Multi-XXT operator),
+        # apply, then clear the exclusion so the operator's resting state is the
+        # full (no-exclude) sum.
+        self._k_all_op.set_exclude(exclude_idx)
+        try:
+            xxt_v = self._k_all_op.matvec(v_proj)
+        finally:
+            self._k_all_op.set_exclude(None)
 
         m = self._m_proj
         if exclude_chrom is not None:
@@ -1514,15 +1497,9 @@ def compute_bolt_variant_stats(
         xp = np
         dev_ctx = contextlib.nullcontext
 
-    # Allele counts and missingness
-    if use_cupy:
-        acount_raw, miss_raw = allele_counts_cupy(grg, return_missing=True)
-        acount = _to_np(acount_raw).astype(np.float64)
-        miss = _to_np(miss_raw).astype(np.float64)
-    else:
-        acount_raw, miss_raw = allele_counts(grg, return_missing=True)
-        acount = np.asarray(acount_raw, dtype=np.float64)
-        miss = np.asarray(miss_raw, dtype=np.float64)
+    acount_raw, miss_raw = allele_counts(grg, return_missing=True)
+    acount = np.asarray(acount_raw, dtype=np.float64)
+    miss = np.asarray(miss_raw, dtype=np.float64)
 
     # Effective sample count and diploid mean per variant
     n_eff = n - miss / grg.ploidy
@@ -1614,7 +1591,7 @@ class BoltChromInfStats:
 
     Aligned 1:1 with ``all_stats`` order. Non-model variants carry placeholder
     values (``BOLT_BAD_SNP_STAT`` chi2, p=1.0, beta=0, se=nan). Contains no GRG
-    mutation metadata; use ``lmm_inf_stats_to_dataframe`` (in ``grapp.bolt.lmm``)
+    mutation metadata; use ``lmm_inf_stats_to_dataframe`` (in ``grapp.assoc.bolt_lmm``)
     to annotate.
     """
     chrom: Any
@@ -1675,7 +1652,7 @@ def compute_lmm_inf_stats(
     variants carry placeholder values). Contains everything derivable from
     ``BoltLmmOps`` and ``BoltVariantStats`` without any per-variant
     ``get_mutation_by_id`` lookup. Use ``lmm_inf_stats_to_dataframe`` (in
-    ``grapp.bolt.lmm``) to attach GRG mutation metadata and produce the standard
+    ``grapp.assoc.bolt_lmm``) to attach GRG mutation metadata and produce the standard
     BOLT-LMM DataFrame.
 
     Backend-correct: the operator dispatch inside ``ops.scores`` follows
@@ -1708,7 +1685,7 @@ def compute_lmm_inf_stats(
             linreg_scores = np.asarray(linreg_scores)
             lmm_scores    = np.asarray(lmm_scores)
 
-        freqs_full = _to_np(allele_frequencies_cupy(grg)) if ops._is_cupy else allele_frequencies(grg)
+        freqs_full = allele_frequencies(grg)
 
         # Per-variant arrays in all_stats order. These are read-only views into
         # the BoltVariantStatsArray; downstream arithmetic allocates new arrays
