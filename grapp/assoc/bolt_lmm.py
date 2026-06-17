@@ -122,9 +122,31 @@ def bolt_lmm_inf(
     cg_stats = CgStats()
 
     _y_arr = np.asarray(y, dtype=np.float64)
+
+    # Phenotype missingness: drop individuals with NaN phenotype from the entire
+    # analysis (GRM, means, norms, CG solves), matching the C++ BOLT, by restricting
+    # every GRG operator / stat to the non-missing individuals via sample_filter.
+    sample_filter = None
+    y_miss = np.isnan(_y_arr)
+    if y_miss.any():
+        if covariates.covar_cols or covariates.q_covar_cols or covariates.cindep != 1:
+            raise NotImplementedError(
+                "missing phenotypes are only supported for the intercept-only model"
+            )
+        nm = np.flatnonzero(~y_miss)
+        logger.info(
+            "Dropping %d/%d individuals with missing phenotype; Nused=%d",
+            int(y_miss.sum()), _y_arr.size, nm.size,
+        )
+        _y_arr = _y_arr[nm]
+        covariates = CovariateBasis.intercept_only(nm.size)
+        sample_filter = nm.tolist()
+
+    y = _y_arr
+    n_used = _y_arr.size
     logger.info(
         "Phenotype: N=%d mean=%.6g std=%.6g",
-        _y_arr.size, float(_y_arr.mean()), float(_y_arr.std()),
+        n_used, float(_y_arr.mean()), float(_y_arr.std()),
     )
 
     # Detect the CuPy/NumPy backend once and pass it to every consumer.
@@ -136,7 +158,7 @@ def bolt_lmm_inf(
     with _nvtx("bolt:variant_stats"):
         grgs = [grg for _, grg in chrom_grgs]
         scheduler = _wrap_grg(chrom_grgs[0][1]).make_scheduler(grgs, threads)
-        futures = [scheduler.submit(grg, compute_bolt_variant_stats, grg, covariates, grg.num_individuals, use_cupy) for _, grg in chrom_grgs]
+        futures = [scheduler.submit(grg, compute_bolt_variant_stats, grg, covariates, n_used, use_cupy, sample_filter) for _, grg in chrom_grgs]
         for future in futures:
             stats = future.result()
             chrom_all_stats.append(stats)
@@ -145,7 +167,7 @@ def bolt_lmm_inf(
     # Build ops
     t0 = time.perf_counter()
     with _nvtx("bolt:ops_setup"):
-        ops = BoltLmmOps(chrom_grgs, chrom_all_stats, covariates, threads=threads, use_cupy=use_cupy).setup()
+        ops = BoltLmmOps(chrom_grgs, chrom_all_stats, covariates, threads=threads, use_cupy=use_cupy, sample_filter=sample_filter).setup()
     logger.info(
         "Individuals N=%d, model SNPs M=%d across %d chroms", ops.n, ops.m_proj, len(ops.chroms),
     )

@@ -60,9 +60,9 @@ def add_options(subparser):
     subparser.add_argument(
         "--mc-trials",
         type=int,
-        default=3,
-        help="Number of MC trials for variance-component estimation (default: 3; "
-             "0 = BOLT auto-size max(min(4e9/N^2, 15), 3)).",
+        default=0,
+        help="Number of MC trials for variance-component estimation. Default 0 = "
+             "BOLT auto-size max(min(4e9/N^2, 15), 3); pass a positive int to override.",
     )
     subparser.add_argument(
         "--cg-tol",

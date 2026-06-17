@@ -439,6 +439,7 @@ class BoltLmmOps:
         covariates: CovariateBasis,
         threads: int = 1,
         use_cupy: Optional[bool] = None,
+        sample_filter: Optional[List[int]] = None,
     ):
         if len(chrom_grgs) != len(chrom_stats):
             raise ValueError("chrom_grgs and chrom_stats must have the same length")
@@ -447,6 +448,9 @@ class BoltLmmOps:
         self._covariates = covariates
         self._threads = threads
         self._use_cupy_arg = use_cupy
+        # Non-missing INDIVIDUAL indices, or None to use all individuals. When set,
+        # N_used = len(sample_filter) and every operator / stat is restricted to it.
+        self._sample_filter = sample_filter
 
         self._n: int = 0
         self._m_proj: int = 0
@@ -464,11 +468,18 @@ class BoltLmmOps:
 
     def setup(self) -> "BoltLmmOps":
         grgs_list = [grg for _, grg in self._chrom_grgs]
-        self._n = int(grgs_list[0].num_individuals)
+        # N_used: the number of non-missing individuals when a sample_filter is set,
+        # else all individuals in the GRG.
+        if self._sample_filter is not None:
+            self._n = len(self._sample_filter)
+            samp = [s for i in self._sample_filter for s in (2 * i, 2 * i + 1)]
+        else:
+            self._n = int(grgs_list[0].num_individuals)
+            samp = None
 
         if self._covariates.nused != self._n:
             raise ValueError(
-                f"covariate sample count {self._covariates.nused} != GRG individual count {self._n}"
+                f"covariate sample count {self._covariates.nused} != N_used {self._n}"
             )
 
         # Backend: use the explicitly passed flag if any; otherwise auto-detect.
@@ -505,7 +516,7 @@ class BoltLmmOps:
             mcn2 = model_stats.mean_center_norm2
             var_c = mcn2 / float(self._n - 1)
 
-            freqs_c = allele_frequencies(grg)
+            freqs_c = allele_frequencies(grg, sample_filter=samp)
 
             m_c = len(model_stats)
             self._m_proj += m_c
@@ -515,6 +526,7 @@ class BoltLmmOps:
             self._x_ops[chrom] = std_x_cls(
                 grg, _UP, freqs_c,
                 custom_variance=var_c,
+                sample_filter=self._sample_filter,
             )
 
             self._chrom_to_op_idx[chrom] = len(active_grgs)
@@ -531,6 +543,7 @@ class BoltLmmOps:
             active_grgs, active_freqs,
             custom_variance=active_vars,
             threads=self._threads,
+            sample_filter=self._sample_filter,
         )
 
         # Multi-chromosome standardized-X operator (sum_c X_c @ w_c) for batched
@@ -539,6 +552,7 @@ class BoltLmmOps:
             active_grgs, _UP, active_freqs,
             custom_variance=active_vars,
             threads=self._threads,
+            sample_filter=self._sample_filter,
         )
 
         return self
@@ -1243,6 +1257,7 @@ def compute_bolt_variant_stats(
     covariates: CovariateBasis,
     n_individuals: int,
     use_cupy: Optional[bool] = None,
+    sample_filter: Optional[List[int]] = None,
 ) -> BoltVariantStatsArray:
     """
     Compute BOLT-LMM-inf per-variant statistics from a GRG.
@@ -1253,6 +1268,13 @@ def compute_bolt_variant_stats(
 
     Note that this is lightweight and is done sequentially currently, not using
     the linear operators.
+
+    :param sample_filter: Optional list of non-missing INDIVIDUAL indices. When
+        given, every quantity (counts, means, norms, covariate projection) is
+        computed over only those individuals, matching BOLT's removal of
+        missing-phenotype individuals. ``n_individuals`` must equal
+        ``len(sample_filter)`` and ``covariates`` must be built over that many
+        rows. ``None`` => use all individuals (unchanged behavior).
     """
     grg = _wrap_grg(grg)
     n = int(n_individuals)
@@ -1267,7 +1289,17 @@ def compute_bolt_variant_stats(
         xp = np
         dev_ctx = contextlib.nullcontext
 
-    acount_raw, miss_raw = allele_counts(grg, return_missing=True)
+    # Sample-level (haplotype) indices for allele_counts; per-individual 0/1 mask
+    # for the by_individual xtx / covariate traversals. None => all individuals.
+    if sample_filter is not None:
+        samp = [s for i in sample_filter for s in (2 * i, 2 * i + 1)]
+        indiv_mask = np.zeros(grg.num_individuals, dtype=np.float64)
+        indiv_mask[sample_filter] = 1.0
+    else:
+        samp = None
+        indiv_mask = np.ones(grg.num_individuals, dtype=np.float64)
+
+    acount_raw, miss_raw = allele_counts(grg, return_missing=True, sample_filter=samp)
     acount = np.asarray(acount_raw, dtype=np.float64)
     miss = np.asarray(miss_raw, dtype=np.float64)
 
@@ -1279,8 +1311,10 @@ def compute_bolt_variant_stats(
     # sumsq_g = diag(X_indiv^T X_indiv)_j = sum_i g_ij^2, g_ij in {0,1,2}.
     # init="xtx" with by_individual=True computes the individual-level squared sum,
     # matching the native BED-based computation (sumsq_lut[g].sum() = sum_i g_ij^2).
+    # The input row is a per-individual 0/1 weight, so passing indiv_mask (1 on
+    # non-missing) restricts the squared sum to the kept individuals exactly.
     with dev_ctx():
-        inp = xp.ones((1, grg.num_individuals), dtype=np.float64)
+        inp = xp.asarray(indiv_mask).reshape(1, -1)
 
     sumsq_g = _to_np(grg.matmul(
         inp,
@@ -1288,8 +1322,6 @@ def compute_bolt_variant_stats(
         by_individual=True,
         init="xtx",
     )).squeeze().astype(np.float64)
-
-    #TODO: this is not good with missing data?
 
     # mean_center_norm2 = sum_i (x_ij - mean_j)^2 (using n_eff for mean)
     mean_center_norm2 = sumsq_g - acount * diploid_mean
@@ -1304,12 +1336,20 @@ def compute_bolt_variant_stats(
     # proj_norm2: subtract covariate contribution via c UP traversals
     # proj_norm2_i = mean_center_norm2_i - sum_k (X_i^T q_k - mean_i * sum(q_k))^2
     sum_sq_proj = np.zeros(grg.num_mutations, dtype=np.float64)
-    Q = covariates.basis  # (n_individuals, cindep)
+    Q = covariates.basis  # (N_used, cindep)
     for k in range(covariates.cindep):
         q_k = Q[:, k].astype(np.float64)
         sum_qk = float(np.sum(q_k))
+        # The by_individual traversal needs a full length-num_individuals vector;
+        # scatter the (kept-only) covariate column back, zero on missing, so the
+        # score is summed over the kept individuals only.
+        if sample_filter is not None:
+            q_full = np.zeros(grg.num_individuals, dtype=np.float64)
+            q_full[sample_filter] = q_k
+        else:
+            q_full = q_k
         with dev_ctx():
-            q_dev = xp.asarray(q_k).reshape(1, -1)
+            q_dev = xp.asarray(q_full).reshape(1, -1)
         raw_scores = _to_np(grg.matmul(
             q_dev,
             pygrgl.TraversalDirection.UP,
@@ -1455,7 +1495,12 @@ def compute_lmm_inf_stats(
             linreg_scores = np.asarray(linreg_scores)
             lmm_scores    = np.asarray(lmm_scores)
 
-        freqs_full = allele_frequencies(grg)
+        # A1FREQ must be over the kept (non-missing) individuals, matching BOLT.
+        if ops._sample_filter is not None:
+            _samp = [s for i in ops._sample_filter for s in (2 * i, 2 * i + 1)]
+        else:
+            _samp = None
+        freqs_full = allele_frequencies(grg, sample_filter=_samp)
 
         # Per-variant arrays in all_stats order. These are read-only views into
         # the BoltVariantStatsArray; downstream arithmetic allocates new arrays
