@@ -24,7 +24,6 @@ from grapp.assoc.bolt_inf_core import (
     DEFAULT_MAX_ITERS,
     DEFAULT_PVALUE_METHOD,
     BoltChromInfStats,
-    BoltVariantStats,
     BoltVariantStatsArray,
     BoltLmmOps,
     CalibrationResult,
@@ -40,13 +39,13 @@ from grapp.assoc.bolt_inf_core import (
     _nvtx,
 )
 
-
 logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
 # DataFrame annotation (optional, slower step)
 # ---------------------------------------------------------------------------
+
 
 def lmm_inf_stats_to_dataframe(
     chrom_stats: List[BoltChromInfStats],
@@ -74,13 +73,24 @@ def lmm_inf_stats_to_dataframe(
             allele0.append(mut.ref_allele)
             snp_id.append(f"{chrom}:{mut.position}:{mut.allele}:{mut.ref_allele}")
 
-        frames.append(pd.DataFrame({
-            "SNP_ID": snp_id, "CHROM": chrom, "BP": bp,
-            "ALLELE1": allele1, "ALLELE0": allele0, "A1FREQ": cs.a1freq,
-            "CHISQ_LINREG": cs.chisq_linreg, "P_LINREG": cs.p_linreg,
-            "BETA": cs.beta, "SE": cs.se,
-            "CHISQ_BOLT_LMM_INF": cs.chisq_lmm_inf, "P_BOLT_LMM_INF": cs.p_lmm_inf,
-        }))
+        frames.append(
+            pd.DataFrame(
+                {
+                    "SNP_ID": snp_id,
+                    "CHROM": chrom,
+                    "BP": bp,
+                    "ALLELE1": allele1,
+                    "ALLELE0": allele0,
+                    "A1FREQ": cs.a1freq,
+                    "CHISQ_LINREG": cs.chisq_linreg,
+                    "P_LINREG": cs.p_linreg,
+                    "BETA": cs.beta,
+                    "SE": cs.se,
+                    "CHISQ_BOLT_LMM_INF": cs.chisq_lmm_inf,
+                    "P_BOLT_LMM_INF": cs.p_lmm_inf,
+                }
+            )
+        )
 
     if not frames:
         return pd.DataFrame()
@@ -90,6 +100,7 @@ def lmm_inf_stats_to_dataframe(
 # ---------------------------------------------------------------------------
 # Top-level driver
 # ---------------------------------------------------------------------------
+
 
 def bolt_lmm_inf(
     chrom_grgs: List[Tuple[Any, GRGCalcInterface]],
@@ -136,7 +147,9 @@ def bolt_lmm_inf(
         nm = np.flatnonzero(~y_miss)
         logger.info(
             "Dropping %d/%d individuals with missing phenotype; Nused=%d",
-            int(y_miss.sum()), _y_arr.size, nm.size,
+            int(y_miss.sum()),
+            _y_arr.size,
+            nm.size,
         )
         _y_arr = _y_arr[nm]
         covariates = CovariateBasis.intercept_only(nm.size)
@@ -146,7 +159,9 @@ def bolt_lmm_inf(
     n_used = _y_arr.size
     logger.info(
         "Phenotype: N=%d mean=%.6g std=%.6g",
-        n_used, float(_y_arr.mean()), float(_y_arr.std()),
+        n_used,
+        float(_y_arr.mean()),
+        float(_y_arr.std()),
     )
 
     # Detect the CuPy/NumPy backend once and pass it to every consumer.
@@ -158,22 +173,47 @@ def bolt_lmm_inf(
     with _nvtx("bolt:variant_stats"):
         grgs = [grg for _, grg in chrom_grgs]
         scheduler = _wrap_grg(chrom_grgs[0][1]).make_scheduler(grgs, threads)
-        futures = [scheduler.submit(grg, compute_bolt_variant_stats, grg, covariates, n_used, use_cupy, sample_filter) for _, grg in chrom_grgs]
+        futures = [
+            scheduler.submit(
+                grg,
+                compute_bolt_variant_stats,
+                grg,
+                covariates,
+                n_used,
+                use_cupy,
+                sample_filter,
+            )
+            for _, grg in chrom_grgs
+        ]
         for future in futures:
             stats = future.result()
             chrom_all_stats.append(stats)
-    logger.info("Time for computing variant statistics = %.2f sec", time.perf_counter() - t0)
+    logger.info(
+        "Time for computing variant statistics = %.2f sec", time.perf_counter() - t0
+    )
 
     # Build ops
     t0 = time.perf_counter()
     with _nvtx("bolt:ops_setup"):
-        ops = BoltLmmOps(chrom_grgs, chrom_all_stats, covariates, threads=threads, use_cupy=use_cupy, sample_filter=sample_filter).setup()
+        ops = BoltLmmOps(
+            chrom_grgs,
+            chrom_all_stats,
+            covariates,
+            threads=threads,
+            use_cupy=use_cupy,
+            sample_filter=sample_filter,
+        ).setup()
     logger.info(
-        "Individuals N=%d, model SNPs M=%d across %d chroms", ops.n, ops.m_proj, len(ops.chroms),
+        "Individuals N=%d, model SNPs M=%d across %d chroms",
+        ops.n,
+        ops.m_proj,
+        len(ops.chroms),
     )
     logger.info(
         "Model SNPs per chrom: %s",
-        ", ".join(f"{chrom}:{ops.m_proj_by_chrom.get(chrom, 0)}" for chrom in ops.chroms),
+        ", ".join(
+            f"{chrom}:{ops.m_proj_by_chrom.get(chrom, 0)}" for chrom in ops.chroms
+        ),
     )
     logger.info("Time for BoltLmmOps setup = %.2f sec", time.perf_counter() - t0)
 
@@ -182,7 +222,8 @@ def bolt_lmm_inf(
     t0 = time.perf_counter()
     with _nvtx("bolt:variance_fit"):
         fit = fit_bolt_variance_components(
-            ops, y,
+            ops,
+            y,
             mc_trials=mc_trials,
             seed=seed,
             batched_apply_x=batched_apply_x,
@@ -190,14 +231,18 @@ def bolt_lmm_inf(
             max_iter=max_iter,
             stats=cg_stats,
         )
-    logger.info("Time for fitting variance components = %.2f sec", time.perf_counter() - t0)
+    logger.info(
+        "Time for fitting variance components = %.2f sec", time.perf_counter() - t0
+    )
 
     # LOCO + calibration
     residuals: Dict[Any, Any] = {}
     t0 = time.perf_counter()
     with _nvtx("bolt:calibration"):
         calibration = calibrate_lmm_inf(
-            ops, y, residuals,
+            ops,
+            y,
+            residuals,
             fit=fit,
             count=num_calib_snps,
             seed=seed,
@@ -212,7 +257,13 @@ def bolt_lmm_inf(
     t0 = time.perf_counter()
     with _nvtx("bolt:assoc_stats"):
         stats = compute_lmm_inf_stats(
-            ops, chrom_grgs, chrom_all_stats, y, residuals, fit, calibration,
+            ops,
+            chrom_grgs,
+            chrom_all_stats,
+            y,
+            residuals,
+            fit,
+            calibration,
             pvalue_method=pvalue_method,
         )
     logger.info("Time for computing assoc stats = %.2f sec", time.perf_counter() - t0)
@@ -220,11 +271,15 @@ def bolt_lmm_inf(
     summary = summarize_chisq(stats)
     logger.info(
         "Mean LINREG: %.6g (%d good SNPs)   lambdaGC: %.6g",
-        summary["linreg"]["mean"], summary["linreg"]["n_good"], summary["linreg"]["lambda_gc"],
+        summary["linreg"]["mean"],
+        summary["linreg"]["n_good"],
+        summary["linreg"]["lambda_gc"],
     )
     logger.info(
         "Mean BOLT_LMM_INF: %.6g (%d good SNPs)   lambdaGC: %.6g",
-        summary["lmm_inf"]["mean"], summary["lmm_inf"]["n_good"], summary["lmm_inf"]["lambda_gc"],
+        summary["lmm_inf"]["mean"],
+        summary["lmm_inf"]["n_good"],
+        summary["lmm_inf"]["lambda_gc"],
     )
 
     return fit, calibration, residuals, stats

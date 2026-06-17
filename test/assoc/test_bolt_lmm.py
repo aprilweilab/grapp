@@ -63,13 +63,18 @@ class TestBoltLmmInf(unittest.TestCase):
         y = read_pheno(os.path.join(INPUT_DIR, pheno_file))
         self.assertEqual(y.shape[0], self.n)
         self.assertEqual(
-            int(np.isnan(y).sum()), expected_missing,
+            int(np.isnan(y).sum()),
+            expected_missing,
             f"{pheno_file}: expected {expected_missing} missing, got {int(np.isnan(y).sum())}",
         )
         cov = CovariateBasis.intercept_only(self.n)
 
         fit, cal, _, stats = bolt_lmm_inf(
-            self.chrom_grgs, y, cov, seed=SEED, threads=1,
+            self.chrom_grgs,
+            y,
+            cov,
+            seed=SEED,
+            threads=1,
         )
         df = lmm_inf_stats_to_dataframe(stats, self.chrom_grgs)
 
@@ -92,18 +97,26 @@ class TestBoltLmmInf(unittest.TestCase):
             # meaningless in the tail, so a robust central statistic is used.
             med_abs = float(np.median(abs_err))
             med_rel = float(np.median(rel_err))
-            self.assertLess(med_abs, ABS_TOL, f"{col}: median abs err {med_abs:.3e} >= {ABS_TOL}")
-            self.assertLess(med_rel, rel_tol, f"{col}: median rel err {med_rel:.3e} >= {rel_tol}")
+            self.assertLess(
+                med_abs, ABS_TOL, f"{col}: median abs err {med_abs:.3e} >= {ABS_TOL}"
+            )
+            self.assertLess(
+                med_rel, rel_tol, f"{col}: median rel err {med_rel:.3e} >= {rel_tol}"
+            )
 
         # Sanity on the fitted variance-component scalars.
         self.assertTrue(0.0 <= fit.h2 <= 1.0, f"h2 out of range: {fit.h2}")
-        self.assertGreater(cal.factor, 0.0, f"calibration factor not positive: {cal.factor}")
+        self.assertGreater(
+            cal.factor, 0.0, f"calibration factor not positive: {cal.factor}"
+        )
 
     def test_no_missing(self):
         self._run_against_truth("bolt.pheno.txt", "bolt.truth.tsv", expected_missing=0)
 
     def test_missing(self):
-        self._run_against_truth("bolt.miss.pheno.txt", "bolt.miss.truth.tsv", expected_missing=55)
+        self._run_against_truth(
+            "bolt.miss.pheno.txt", "bolt.miss.truth.tsv", expected_missing=55
+        )
 
 
 if __name__ == "__main__":

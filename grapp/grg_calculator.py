@@ -478,7 +478,11 @@ class GRGSpMVCalculator(GRGCalcInterface):
         if self.use_cupy:
             with cupy.cuda.Device(self.device):
                 mm_input = cupy.asarray(input)
-                mm_init = init if (init is None or isinstance(init, str)) else cupy.asarray(init)
+                mm_init = (
+                    init
+                    if (init is None or isinstance(init, str))
+                    else cupy.asarray(init)
+                )
                 mm_miss = cupy.asarray(miss) if miss is not None else miss
                 result = self._op.matmul(
                     mm_input,

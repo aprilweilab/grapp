@@ -1324,9 +1324,7 @@ class MultiCuPyStdXXTOperator(LinearOperator):
         n, k = self.shape[0], other_matrix.shape[1]
         with _nvtx("MultiStdXXTOp_matmat"):
             active = [
-                (i, op)
-                for i, op in enumerate(self.operators)
-                if i not in self._exclude
+                (i, op) for i, op in enumerate(self.operators) if i not in self._exclude
             ]
             if not active:
                 with cuda.Device(self._output_device):

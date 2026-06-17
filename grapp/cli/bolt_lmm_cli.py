@@ -18,14 +18,14 @@ def add_options(subparser):
         "grg_input",
         nargs="+",
         help="One GRG file per chromosome. Order (or a chrN substring in the "
-             "filename) determines the chromosome label.",
+        "filename) determines the chromosome label.",
     )
     subparser.add_argument(
         "-p",
         "--phenotypes",
         required=True,
         help="Phenotype file (PLINK/GCTA/GRG format). Read in file order to "
-             "match the GRG individual order.",
+        "match the GRG individual order.",
     )
     subparser.add_argument(
         "-c",
@@ -62,7 +62,7 @@ def add_options(subparser):
         type=int,
         default=0,
         help="Number of MC trials for variance-component estimation. Default 0 = "
-             "BOLT auto-size max(min(4e9/N^2, 15), 3); pass a positive int to override.",
+        "BOLT auto-size max(min(4e9/N^2, 15), 3); pass a positive int to override.",
     )
     subparser.add_argument(
         "--cg-tol",

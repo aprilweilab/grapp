@@ -1302,9 +1302,7 @@ class MultiSciPyStdXXTOperator(LinearOperator):
         return self
 
     def _matmat(self, other_matrix):
-        active = [
-            op for i, op in enumerate(self.operators) if i not in self._exclude
-        ]
+        active = [op for i, op in enumerate(self.operators) if i not in self._exclude]
         if not active:
             raise ValueError("No active operators available for matrix multiplication")
         futures = [
