@@ -64,7 +64,6 @@ class TestBoltLmmInf(unittest.TestCase):
         cls.truth = pd.read_csv(truth_path, sep="\t")
 
     def test_bolt_lmm_inf_grgl_vs_truth(self):
-        # threads=1 + fixed seed + boost RNG => deterministic.
         fit, cal, _, stats = bolt_lmm_inf(
             self.chrom_grgs,
             self.y,

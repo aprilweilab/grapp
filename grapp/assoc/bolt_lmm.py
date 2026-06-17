@@ -102,7 +102,6 @@ def bolt_lmm_inf(
     max_iter: int = DEFAULT_MAX_ITERS,
     seed: int = BOLT_RANDOM_SEED,
     threads: int = 1,
-    rng_kind: str = "numpy",
     batched_apply_x: bool = False,
     pvalue_method: str = DEFAULT_PVALUE_METHOD,
 ) -> Tuple[VarianceFit, CalibrationResult, Dict, List[BoltChromInfStats]]:
@@ -112,8 +111,6 @@ def bolt_lmm_inf(
     :param chrom_grgs: List of (chromosome_label, GRGCalcInterface), one per chromosome.
     :param y: Phenotype vector of length n_individuals.
     :param covariates: Orthonormal covariate basis (includes intercept).
-    :param rng_kind: RNG for MC variance-component probes: "numpy" (fast, default)
-        or "boost" (slower, bit-matches the BOLT-LMM reference).
     :param batched_apply_x: If True, generate the MC genetic probes with a single
         batched matmat over all trials; if False (default), loop one probe column
         per call. Both go through the Multi-X operator.
@@ -166,7 +163,6 @@ def bolt_lmm_inf(
             ops, y,
             mc_trials=mc_trials,
             seed=seed,
-            rng_kind=rng_kind,
             batched_apply_x=batched_apply_x,
             rel_tol=10.0 * cg_tol,
             max_iter=max_iter,

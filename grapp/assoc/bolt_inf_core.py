@@ -11,10 +11,8 @@ from __future__ import annotations
 import contextlib
 import logging
 import math
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -37,8 +35,6 @@ DEFAULT_NUM_CALIB_SNPS = 30
 DEFAULT_H2_EST_MC_TRIALS = 0
 DEFAULT_CG_TOL = 5e-4
 DEFAULT_MAX_ITERS = 10_000
-BOOST_NORMAL_HEADER = Path("/usr/include/boost/random/normal_distribution.hpp")
-BOOST_EXPONENTIAL_HEADER = Path("/usr/include/boost/random/exponential_distribution.hpp")
 
 _UP = pygrgl.TraversalDirection.UP
 
@@ -250,197 +246,6 @@ class CovariateBasis:
     def project_device_inplace(self, values):
         values[...] = self.project_device(values)
         return values
-
-
-# ---------------------------------------------------------------------------
-# Boost-compatible RNGs (needed for deterministic reproduction of BOLT results)
-# ---------------------------------------------------------------------------
-
-class BoostMt19937:
-    """Small Boost.Random mt19937 clone for BOLT's calibration SNP sampler."""
-
-    _n = 624
-    _m = 397
-    _r = 31
-    _a = 0x9908B0DF
-    _u = 11
-    _d = 0xFFFFFFFF
-    _s = 7
-    _b = 0x9D2C5680
-    _t = 15
-    _c = 0xEFC60000
-    _l = 18
-    _f = 1812433253
-    _mask = 0xFFFFFFFF
-    _upper_mask = 0x80000000
-    _lower_mask = 0x7FFFFFFF
-
-    def __init__(self, seed: int):
-        self.x = [0] * self._n
-        self.i = self._n
-        self.seed(seed)
-
-    def seed(self, value: int) -> None:
-        self.x[0] = int(value) & self._mask
-        for idx in range(1, self._n):
-            prev = self.x[idx - 1]
-            self.x[idx] = (self._f * (prev ^ (prev >> 30)) + idx) & self._mask
-        self.i = self._n
-        self._normalize_state()
-
-    def _normalize_state(self) -> None:
-        y0 = self.x[self._m - 1] ^ self.x[self._n - 1]
-        if y0 & (1 << 31):
-            y0 = ((y0 ^ self._a) << 1) | 1
-        else:
-            y0 <<= 1
-        self.x[0] = (self.x[0] & self._upper_mask) | (y0 & self._lower_mask)
-        if not any(self.x):
-            self.x[0] = 1 << 31
-
-    def _twist(self) -> None:
-        for idx in range(0, self._n - self._m):
-            y = (self.x[idx] & self._upper_mask) | (self.x[idx + 1] & self._lower_mask)
-            self.x[idx] = (self.x[idx + self._m] ^ (y >> 1) ^ ((self.x[idx + 1] & 1) * self._a)) & self._mask
-        for idx in range(self._n - self._m, self._n - 1):
-            y = (self.x[idx] & self._upper_mask) | (self.x[idx + 1] & self._lower_mask)
-            self.x[idx] = (self.x[idx - (self._n - self._m)] ^ (y >> 1) ^ ((self.x[idx + 1] & 1) * self._a)) & self._mask
-        y = (self.x[self._n - 1] & self._upper_mask) | (self.x[0] & self._lower_mask)
-        self.x[self._n - 1] = (self.x[self._m - 1] ^ (y >> 1) ^ ((self.x[0] & 1) * self._a)) & self._mask
-        self.i = 0
-
-    def __call__(self) -> int:
-        if self.i == self._n:
-            self._twist()
-        z = self.x[self.i]
-        self.i += 1
-        z ^= (z >> self._u) & self._d
-        z ^= (z << self._s) & self._b
-        z ^= (z << self._t) & self._c
-        z ^= z >> self._l
-        return z & self._mask
-
-
-def boost_uniform_int_0_2pow30(rng: BoostMt19937) -> int:
-    """Match boost::uniform_int<>(0, 1<<30) for a 32-bit mt19937 engine."""
-    max_value = 1 << 30
-    bucket_size = 3
-    while True:
-        result = rng() // bucket_size
-        if result <= max_value:
-            return int(result)
-
-
-_BOOST_TABLES: Dict[Tuple[Path, str], Tuple[float, ...]] = {}
-
-
-def _boost_table(header: Path, table_name: str) -> Tuple[float, ...]:
-    key = (Path(header), str(table_name))
-    cached = _BOOST_TABLES.get(key)
-    if cached is not None:
-        return cached
-    text = Path(header).read_text(encoding="utf-8")
-    match = re.search(rf"{re.escape(table_name)}\[\d+\]\s*=\s*\{{(?P<body>.*?)\}};", text, flags=re.S)
-    if match is None:
-        raise RuntimeError(f"could not find Boost.Random {table_name} in {header}")
-    values = tuple(float(item.strip()) for item in match.group("body").replace("\n", " ").split(",") if item.strip())
-    _BOOST_TABLES[key] = values
-    return values
-
-
-def boost_uniform_01(rng: BoostMt19937) -> float:
-    """Match boost::random::uniform_01<double> for boost::mt19937."""
-    return float(rng()) / 4294967296.0
-
-
-def boost_generate_int_float_pair_8(rng: BoostMt19937) -> Tuple[float, int]:
-    """Match boost::random::detail::generate_int_float_pair<double, 8>."""
-    first = int(rng())
-    bucket = first & 0xFF
-    r = float(first >> 8) / 16777216.0
-    second = int(rng())
-    r += float(second & ((1 << 29) - 1))
-    r /= float(1 << 29)
-    return r, bucket
-
-
-class BoostExponentialDistribution:
-    """Boost.Random exponential_distribution<> clone for the normal tail path."""
-
-    def __init__(self, lambda_arg: float = 1.0):
-        self.lambda_arg = float(lambda_arg)
-        if self.lambda_arg <= 0.0:
-            raise ValueError("lambda_arg must be positive")
-        self._table_x = _boost_table(BOOST_EXPONENTIAL_HEADER, "table_x")
-        self._table_y = _boost_table(BOOST_EXPONENTIAL_HEADER, "table_y")
-
-    def __call__(self, rng: BoostMt19937) -> float:
-        table_x = self._table_x
-        table_y = self._table_y
-        shift = 0.0
-        while True:
-            r, i = boost_generate_int_float_pair_8(rng)
-            x = r * table_x[i]
-            if x < table_x[i + 1]:
-                return (shift + x) / self.lambda_arg
-            if i == 0:
-                shift += table_x[1]
-                continue
-            y01 = boost_uniform_01(rng)
-            y = table_y[i] + y01 * (table_y[i + 1] - table_y[i])
-            y_above_ubound = (table_x[i] - table_x[i + 1]) * y01 - (table_x[i] - x)
-            y_above_lbound = y - (table_y[i + 1] + (table_x[i + 1] - x) * table_y[i + 1])
-            if y_above_ubound < 0.0 and (y_above_lbound < 0.0 or y < math.exp(-x)):
-                return (x + shift) / self.lambda_arg
-
-
-class BoostNormalDistribution:
-    """Boost.Random normal_distribution<> clone used by BOLT's MC scaling."""
-
-    def __init__(self, mean: float = 0.0, sigma: float = 1.0):
-        self.mean = float(mean)
-        self.sigma = float(sigma)
-        if self.sigma < 0.0:
-            raise ValueError("sigma must be nonnegative")
-        self._table_x = _boost_table(BOOST_NORMAL_HEADER, "table_x")
-        self._table_y = _boost_table(BOOST_NORMAL_HEADER, "table_y")
-
-    def __call__(self, rng: BoostMt19937) -> float:
-        unit = self._unit(rng)
-        return unit * self.sigma + self.mean
-
-    def _unit(self, rng: BoostMt19937) -> float:
-        table_x = self._table_x
-        table_y = self._table_y
-        while True:
-            r, bucket = boost_generate_int_float_pair_8(rng)
-            sign = (bucket & 1) * 2 - 1
-            i = bucket >> 1
-            x = r * table_x[i]
-            if x < table_x[i + 1]:
-                return x * sign
-            if i == 0:
-                return self._tail(rng) * sign
-            y01 = boost_uniform_01(rng)
-            y = table_y[i] + y01 * (table_y[i + 1] - table_y[i])
-            if table_x[i] >= 1.0:
-                y_above_ubound = (table_x[i] - table_x[i + 1]) * y01 - (table_x[i] - x)
-                y_above_lbound = y - (table_y[i] + (table_x[i] - x) * table_y[i] * table_x[i])
-            else:
-                y_above_lbound = (table_x[i] - table_x[i + 1]) * y01 - (table_x[i] - x)
-                y_above_ubound = y - (table_y[i] + (table_x[i] - x) * table_y[i] * table_x[i])
-            if y_above_ubound < 0.0 and (y_above_lbound < 0.0 or y < math.exp(-(x * x / 2.0))):
-                return x * sign
-
-    def _tail(self, rng: BoostMt19937) -> float:
-        tail_start = self._table_x[1]
-        exp_x = BoostExponentialDistribution(tail_start)
-        exp_y = BoostExponentialDistribution()
-        while True:
-            x = exp_x(rng)
-            y = exp_y(rng)
-            if 2.0 * y > x * x:
-                return x + tail_start
 
 
 # ---------------------------------------------------------------------------
@@ -920,46 +725,23 @@ def _generate_bolt_mc_components(
     *,
     trials: int,
     seed: int,
-    rng_kind: str = "numpy",
     batched_apply_x: bool = False,
 ) -> Tuple[List[Any], List[Any], Any]:
-    if rng_kind not in ("numpy", "boost"):
-        raise ValueError(f"unknown rng_kind {rng_kind!r}; expected 'numpy' or 'boost'")
-
     xp = ops.xp
     inv_sqrt_m = 1.0 / math.sqrt(float(ops.m_proj))
 
-    weights_by_chrom: Dict[Any, np.ndarray] = {
-        chrom: np.zeros((int(trials), len(ops.model_stats_for(chrom))), dtype=np.float64)
-        for chrom in ops.chroms
-        if ops.model_stats_for(chrom)
-    }
-
-    if rng_kind == "boost":
-        # Scalar Boost-compatible draws: bit-matches the BOLT-LMM reference.
-        rng = BoostMt19937(int(seed) + 1)
-        randn = BoostNormalDistribution()
-        for chrom in ops.chroms:
-            model_stats = ops.model_stats_for(chrom)
-            if not model_stats:
-                continue
-            chrom_weights = weights_by_chrom[chrom]
-            for pos, stat in enumerate(model_stats):
-                for trial in range(int(trials)):
-                    chrom_weights[trial, pos] = randn(rng) * inv_sqrt_m
-        noise = None  # generated per-trial below
-    else:
-        # Fast vectorized numpy draws (default). Order: all weights, then noise.
-        gen = np.random.default_rng(int(seed) + 1)
-        for chrom in ops.chroms:
-            model_stats = ops.model_stats_for(chrom)
-            if not model_stats:
-                continue
-            m_c = len(model_stats)
-            weights_by_chrom[chrom] = (
-                gen.standard_normal((int(trials), m_c)) * inv_sqrt_m
-            )
-        noise = gen.standard_normal((int(trials), int(ops.n)))
+    # Vectorized numpy draws. Order: all weights, then noise.
+    weights_by_chrom: Dict[Any, np.ndarray] = {}
+    gen = np.random.default_rng(int(seed) + 1)
+    for chrom in ops.chroms:
+        model_stats = ops.model_stats_for(chrom)
+        if not model_stats:
+            continue
+        m_c = len(model_stats)
+        weights_by_chrom[chrom] = (
+            gen.standard_normal((int(trials), m_c)) * inv_sqrt_m
+        )
+    noise = gen.standard_normal((int(trials), int(ops.n)))
 
     e_rand: List[Any] = []
 
@@ -980,21 +762,10 @@ def _generate_bolt_mc_components(
                 g = ops.apply_x_all(W[:, t:t + 1])  # (n, 1), projected
                 g_rand.append(g[:, 0].copy())
 
-    if rng_kind == "boost":
-        for _trial in range(int(trials)):
-            values = np.fromiter(
-                (randn(rng) for _ in range(int(ops.n))),
-                dtype=np.float64,
-                count=int(ops.n),
-            )
-            e = xp.asarray(values, dtype=DTYPE)
-            ops.project_inplace(e)
-            e_rand.append(e)
-    else:
-        for trial in range(int(trials)):
-            e = xp.asarray(noise[trial], dtype=DTYPE)
-            ops.project_inplace(e)
-            e_rand.append(e)
+    for trial in range(int(trials)):
+        e = xp.asarray(noise[trial], dtype=DTYPE)
+        ops.project_inplace(e)
+        e_rand.append(e)
 
     y_dev = ops.project(xp.asarray(np.asarray(y, dtype=DTYPE).copy()))
     return g_rand, e_rand, y_dev
@@ -1103,7 +874,6 @@ def fit_bolt_variance_components(
     rel_tol: float,
     max_iter: int,
     stats: CgStats,
-    rng_kind: str = "numpy",
     batched_apply_x: bool = False,
 ) -> VarianceFit:
     if int(mc_trials) <= 0:
@@ -1115,7 +885,7 @@ def fit_bolt_variance_components(
     logger.info("Estimating variance parameters: %d MC trials, CGtol=%.3g", trials, rel_tol)
     with _nvtx("bolt:vc:mc_components"):
         g_rand, e_rand, y_dev = _generate_bolt_mc_components(
-            ops, y, trials=trials, seed=int(seed), rng_kind=rng_kind,
+            ops, y, trials=trials, seed=int(seed),
             batched_apply_x=batched_apply_x,
         )
 
@@ -1287,7 +1057,7 @@ def select_bolt_calibration_snps(
         else:
             grammar_scores_by_chrom[chrom] = np.asarray(scores)
 
-    rng = BoostMt19937(int(seed) + 321)
+    rng = np.random.default_rng(int(seed) + 321)
     selected: List[Tuple[Any, BoltVariantStats]] = []
     tried = 0
     for block in range(num_calib):
@@ -1301,7 +1071,7 @@ def select_bolt_calibration_snps(
             attempts += 1
             if attempts > 1_000_000:
                 raise RuntimeError(f"could not select a calibration SNP from block {block}")
-            m = block_start + boost_uniform_int_0_2pow30(rng) % block_width
+            m = block_start + int(rng.integers(block_width))
             chrom, arr, j = _locate(m)
             tried += 1
             # position within this chrom's compact score array
