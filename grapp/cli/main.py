@@ -1,4 +1,5 @@
 from grapp.cli import assoc_cli
+from grapp.cli import bolt_lmm_cli
 from grapp.cli import export_cli
 from grapp.cli import filter_cli
 from grapp.cli import pca_cli
@@ -10,6 +11,7 @@ import argparse
 import sys
 
 CMD_ASSOC = "assoc"
+CMD_BOLT_LMM = "bolt-lmm"
 CMD_PCA = "pca"
 CMD_EXPORT = "export"
 CMD_FILTER = "filter"
@@ -25,6 +27,11 @@ def main():
         help="Perform an association between genotypes and phenotypes.",
     )
     assoc_cli.add_options(assoc_parser)
+    bolt_lmm_parser = subparsers.add_parser(
+        CMD_BOLT_LMM,
+        help="Run BOLT-LMM-inf mixed-model association.",
+    )
+    bolt_lmm_cli.add_options(bolt_lmm_parser)
     pca_parser = subparsers.add_parser(
         CMD_PCA,
         help="Extract principal components from the GRG dataset.",
@@ -59,6 +66,8 @@ def main():
             exit(1)
         elif args.command == CMD_ASSOC:
             assoc_cli.run(args)
+        elif args.command == CMD_BOLT_LMM:
+            bolt_lmm_cli.run(args)
         elif args.command == CMD_PCA:
             pca_cli.run(args)
         elif args.command == CMD_EXPORT:
