@@ -1001,7 +1001,9 @@ class MultiSciPyStdXOperator(LinearOperator):
                 grg_mut_filt = None
                 skip = False
             grg_custom_var = (
-                custom_variance[i] if isinstance(custom_variance, list) else custom_variance
+                custom_variance[i]
+                if isinstance(custom_variance, list)
+                else custom_variance
             )
             if not skip:
                 self.operators.append(
@@ -1051,7 +1053,9 @@ class MultiSciPyStdXOperator(LinearOperator):
                 if i not in self._exclude:
                     assert end <= other_matrix.shape[0]
                     sub_matrix = other_matrix[start:end, :]
-                    futures.append(self.scheduler.submit(op.grg, op_method, op, sub_matrix))
+                    futures.append(
+                        self.scheduler.submit(op.grg, op_method, op, sub_matrix)
+                    )
                 start = end  # always advance so remaining slices stay aligned
             result = None
             for future in futures:
@@ -1068,7 +1072,10 @@ class MultiSciPyStdXOperator(LinearOperator):
             for i, op in enumerate(self.operators):
                 if i not in self._exclude:
                     pending.append(
-                        (op.shape[1], self.scheduler.submit(op.grg, op_method, op, other_matrix))
+                        (
+                            op.shape[1],
+                            self.scheduler.submit(op.grg, op_method, op, other_matrix),
+                        )
                     )
                 else:
                     pending.append((op.shape[1], None))
@@ -1077,7 +1084,9 @@ class MultiSciPyStdXOperator(LinearOperator):
                 if future is not None:
                     parts.append(future.result())
                 else:
-                    parts.append(numpy.zeros((m_c, other_matrix.shape[1]), dtype=self.dtype))
+                    parts.append(
+                        numpy.zeros((m_c, other_matrix.shape[1]), dtype=self.dtype)
+                    )
             return numpy.concatenate(parts)
 
     def _matmat(self, other_matrix):

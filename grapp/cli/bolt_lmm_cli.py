@@ -1,6 +1,5 @@
 import argparse
 import os
-import re
 import sys
 
 import numpy
@@ -79,8 +78,8 @@ def add_options(subparser):
     subparser.add_argument(
         "--seed",
         type=int,
-        default=12345,
-        help="Random seed for MC variance-component probes (default: 12345).",
+        default=42,
+        help="Random seed for MC variance-component probes (default: 42).",
     )
     subparser.add_argument(
         "-j",
@@ -97,20 +96,12 @@ def add_options(subparser):
     )
 
 
-def _chrom_label_from_path(path: str, fallback: int) -> int:
-    """Extract a chromosome number from a filename like chr19.grg; else fallback."""
-    basename = os.path.basename(path)
-    m = re.search(r"chr(\d+)", basename, re.IGNORECASE)
-    if m:
-        return int(m.group(1))
-    return fallback
-
-
 def run(args):
     grg_files = args.grg_input
     chrom_grgs = []
-    for idx, path in enumerate(grg_files, start=1):
-        label = _chrom_label_from_path(path, idx)
+    for path in grg_files:
+        # Label each GRG by its filename (sans .grg). It does not affect the computation.
+        label = os.path.splitext(os.path.basename(path))[0]
         grg = load_grg_calculator(path)
         chrom_grgs.append((label, grg))
 

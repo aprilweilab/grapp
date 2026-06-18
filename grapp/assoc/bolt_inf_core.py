@@ -1450,6 +1450,7 @@ def compute_bolt_variant_stats(
         # The by_individual traversal needs a full length-num_individuals vector;
         # scatter the (kept-only) covariate column back, zero on missing, so the
         # score is summed over the kept individuals only.
+        q_full: np.typing.NDArray[np.float64]
         if sample_filter is not None:
             q_full = np.zeros(grg.num_individuals, dtype=np.float64)
             q_full[sample_filter] = q_k
