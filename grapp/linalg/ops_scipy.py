@@ -947,10 +947,9 @@ class MultiSciPyStdXOperator(LinearOperator):
         corresponds to the "standard" binomial variance scaling.
     :type alpha: float
     :param custom_variance: Instead of using binomial variance, use provided custom variance
-        for mutations. Either a single array of length num_mutations (applied to every GRG),
-        or a list of per-GRG arrays. For example the result from grapp.util.variance().
-        Default: None.
-    :type custom_variance: Optional[Union[numpy.ndarray, List[numpy.ndarray]]]
+        for mutations. Must be an array of length num_mutations, for example the result from
+        grapp.util.variance(). Default: None.
+    :type custom_variance: numpy.ndarray
     """
 
     def __init__(
@@ -964,16 +963,10 @@ class MultiSciPyStdXOperator(LinearOperator):
         sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
         alpha: float = -1,
-        custom_variance: Optional[
-            Union[numpy.typing.NDArray, List[numpy.typing.NDArray]]
-        ] = None,
+        custom_variance: Optional[numpy.typing.NDArray] = None,
     ):
         assert len(grgs) >= 1, "Must provide at least one GRG"
         assert len(grgs) == len(freqs), "Must provide allele frequencies for every GRG"
-        if isinstance(custom_variance, list):
-            assert len(custom_variance) == len(
-                grgs
-            ), "custom_variance list must have one entry per GRG"
         self.direction = direction
         self.num_mutations = sum([g.num_mutations for g in grgs])
         num_samples = grgs[0].num_samples
@@ -983,7 +976,7 @@ class MultiSciPyStdXOperator(LinearOperator):
             self.num_mutations = len(mutation_filter)  # type: ignore
         prev_max_mut = 0
         self.operators = []
-        for i, (g, f) in enumerate(zip(grgs, freqs)):
+        for g, f in zip(grgs, freqs):
             assert g.num_samples == num_samples, "All GRGs must use the same samples"
             if mutation_filter is not None:
                 grg_mut_filt = list(
@@ -1001,11 +994,6 @@ class MultiSciPyStdXOperator(LinearOperator):
             else:
                 grg_mut_filt = None
                 skip = False
-            grg_custom_var = (
-                custom_variance[i]
-                if isinstance(custom_variance, list)
-                else custom_variance
-            )
             if not skip:
                 self.operators.append(
                     SciPyStdXOperator(
@@ -1017,7 +1005,7 @@ class MultiSciPyStdXOperator(LinearOperator):
                         mutation_filter=grg_mut_filt,
                         sample_filter=sample_filter,
                         alpha=alpha,
-                        custom_variance=grg_custom_var,
+                        custom_variance=custom_variance,
                     )
                 )
             prev_max_mut += g.num_mutations
@@ -1168,10 +1156,6 @@ class MultiSciPyStdXXTOperator(LinearOperator):
     GRGs have mutation counts M1, M2, ..., MK, then the dimension of the implicit underlying genotype
     matrix is Nx(M1 + M2 + ... + MK).
 
-    Holds one :class:`SciPyStdXXTOperator` per GRG and sums them in parallel
-    through a scheduler. :meth:`set_exclude` selects chromosomes to leave out of
-    the next product (Leave-One-Chromosome-Out).
-
     :param grgs: The GRGs the operator will multiply against. They must all have the same samples,
         and the mutations are expected to differ (e.g., one GRG per chromosome of the same dataset).
     :type grgs: List[pygrgl.GRG]
@@ -1199,10 +1183,9 @@ class MultiSciPyStdXXTOperator(LinearOperator):
         corresponds to the "standard" binomial variance scaling.
     :type alpha: float
     :param custom_variance: Instead of using binomial variance, use provided custom variance
-        for mutations. Either a single array of length num_mutations (applied to every GRG),
-        or a list of per-GRG arrays. For example the result from grapp.util.variance().
-        Default: None.
-    :type custom_variance: Optional[Union[numpy.ndarray, List[numpy.ndarray]]]
+        for mutations. Must be an array of length num_mutations, for example the result from
+        grapp.util.variance(). Default: None.
+    :type custom_variance: numpy.ndarray
     """
 
     def __init__(
@@ -1215,106 +1198,26 @@ class MultiSciPyStdXXTOperator(LinearOperator):
         sample_filter: Optional[Union[List[int], numpy.typing.NDArray]] = None,
         threads: int = 1,
         alpha: float = -1,
-        custom_variance: Optional[
-            Union[numpy.typing.NDArray, List[numpy.typing.NDArray]]
-        ] = None,
+        custom_variance: Optional[numpy.typing.NDArray] = None,
     ):
-        assert len(grgs) >= 1, "Must provide at least one GRG"
-        assert len(grgs) == len(freqs), "Must provide allele frequencies for every GRG"
-        if isinstance(custom_variance, list):
-            assert len(custom_variance) == len(
-                grgs
-            ), "custom_variance list must have one entry per GRG"
-
-        # One standardized XX^T operator per GRG, dispatched in parallel through a
-        # scheduler. This per-GRG structure (rather than a single fused Multi-X
-        # operator) is what lets set_exclude() skip a chromosome for LOCO. The
-        # full (no-exclude) product equals the fused XX^T since the concatenated
-        # X satisfies X X^T = sum_c X_c X_c^T.
-        self.operators: List[SciPyStdXXTOperator] = []
-        prev_max_mut = 0
-        for i, (g, f) in enumerate(zip(grgs, freqs)):
-            assert (
-                g.num_samples == grgs[0].num_samples
-            ), "All GRGs must use the same samples"
-            if mutation_filter is not None:
-                grg_mut_filt = [
-                    m - prev_max_mut
-                    for m in mutation_filter
-                    if prev_max_mut <= m < prev_max_mut + g.num_mutations
-                ]
-                # If we have an overall filter but none for this GRG, skip it.
-                skip = len(grg_mut_filt) == 0
-            else:
-                grg_mut_filt = None
-                skip = False
-            grg_custom_var = (
-                custom_variance[i]
-                if isinstance(custom_variance, list)
-                else custom_variance
-            )
-            if not skip:
-                self.operators.append(
-                    SciPyStdXXTOperator(
-                        g,
-                        f,
-                        dtype,
-                        haploid=haploid,
-                        mutation_filter=grg_mut_filt,
-                        sample_filter=sample_filter,
-                        alpha=alpha,
-                        custom_variance=grg_custom_var,
-                    )
-                )
-            prev_max_mut += g.num_mutations
-
-        assert len(self.operators) >= 1, "mutation_filter excluded every GRG"
-        self.scheduler = _wrap_grg(grgs[0]).make_scheduler(grgs, threads)
-        # Operator indices to leave out of the next product (set via set_exclude).
-        self._exclude: set = set()
-        n = self.operators[0].shape[0]
-        super().__init__(dtype=dtype, shape=(n, n))
-
-    def set_exclude(
-        self, exclude: Optional[Union[int, List[int]]] = None
-    ) -> "MultiSciPyStdXXTOperator":
-        """Set which operator indices (chromosomes) to leave out of subsequent
-        products (Leave-One-Chromosome-Out). Pass ``None`` or an empty list to
-        include all chromosomes. The exclusion is sticky state that persists
-        until the next call. Returns self for chaining.
-
-        Safe for sequential solvers (e.g. BOLT's CG): the parallelism lives
-        inside a single ``_matmat`` call across chromosomes, so a caller sets the
-        exclusion immediately before its own product. Mirrors
-        :meth:`MultiCuPyStdXXTOperator.set_exclude`."""
-        if exclude is None:
-            self._exclude = set()
-        elif isinstance(exclude, int):
-            self._exclude = {int(exclude)}
-        else:
-            self._exclude = {int(i) for i in exclude}
-        for idx in self._exclude:
-            if idx < 0 or idx >= len(self.operators):
-                raise IndexError(
-                    f"exclude index {idx} out of range for "
-                    f"{len(self.operators)} operators"
-                )
-        return self
+        self.std_x_op = MultiSciPyStdXOperator(
+            grgs,
+            pygrgl.TraversalDirection.UP,
+            freqs,
+            haploid=haploid,
+            dtype=dtype,
+            mutation_filter=mutation_filter,
+            sample_filter=sample_filter,
+            threads=threads,
+            alpha=alpha,
+            custom_variance=custom_variance,
+        )
+        xxt_shape = (self.std_x_op.shape[0], self.std_x_op.shape[0])
+        super().__init__(dtype=dtype, shape=xxt_shape)
 
     def _matmat(self, other_matrix):
-        active = [op for i, op in enumerate(self.operators) if i not in self._exclude]
-        if not active:
-            raise ValueError("No active operators available for matrix multiplication")
-        futures = [
-            self.scheduler.submit(
-                op.std_x_op.grg, SciPyStdXXTOperator._matmat, op, other_matrix
-            )
-            for op in active
-        ]
-        result = futures[0].result()
-        for f in futures[1:]:
-            result = result + f.result()
-        return result
+        D = self.std_x_op._rmatmat(other_matrix)
+        return self.std_x_op._matmat(D)
 
     def _rmatmat(self, other_matrix):
         return self._matmat(other_matrix)
