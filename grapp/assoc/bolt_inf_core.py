@@ -766,7 +766,15 @@ def _sum_score_squares(ops: BoltLmmOps, vector) -> float:
             continue
         scores = ops.scores(chrom, vector)
         xp = _array_module(scores)
-        total += _as_float(xp.sum(scores * scores))
+        if xp is np:
+            total += _as_float(xp.sum(scores * scores))
+        else:
+            # CuPy: scores may live on a non-output device (multi-device LOCO).
+            # Run the reduction on its own device, syncing first, so we never read
+            # in-flight data across devices via peer access.
+            with scores.device:
+                xp.cuda.get_current_stream().synchronize()
+                total += _as_float(xp.sum(scores * scores))
     return float(total)
 
 

@@ -552,6 +552,10 @@ class CuPyStdXOperator(_CuPyStandardizedOperator):
                     # Sync self._device stream; queue copy on out.device's null stream.
                     _xdev_copy(out, result)
                     return out
+                # out is None: ensure the post-matmul scaling/centering kernels have
+                # completed on self._device before any (possibly cross-device) consumer
+                # reads `result`.
+                xp.cuda.get_current_stream().synchronize()
             return result
 
     def _matmat(self, other_matrix, out=None):
