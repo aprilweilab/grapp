@@ -4,6 +4,7 @@ from grapp.cli import filter_cli
 from grapp.cli import pca_cli
 from grapp.cli import show_cli
 from grapp.cli import pheno_cli
+from grapp.cli import polar_cli
 from grapp.util.exceptions import UserInputError
 
 import argparse
@@ -15,6 +16,7 @@ CMD_EXPORT = "export"
 CMD_FILTER = "filter"
 CMD_SHOW = "show"
 CMD_PHENO = "pheno"
+CMD_POLARIZE = "polarize"
 
 
 def main():
@@ -50,6 +52,11 @@ def main():
         help="Simulate phenotypes with a GRG.",
     )
     pheno_cli.add_options(pheno_parser)
+    polar_parser = subparsers.add_parser(
+        CMD_POLARIZE,
+        help="Polarize a GRG using an ancestral sequence.",
+    )
+    polar_cli.add_options(polar_parser)
 
     try:
         args = parser.parse_args()
@@ -69,6 +76,8 @@ def main():
             show_cli.run(args)
         elif args.command == CMD_PHENO:
             pheno_cli.run(args)
+        elif args.command == CMD_POLARIZE:
+            polar_cli.run(args)
         else:
             print(f"Invalid command {args.command}", file=sys.stderr)
             parser.print_help()
