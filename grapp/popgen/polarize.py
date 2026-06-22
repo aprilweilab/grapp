@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 from grapp.util.exceptions import UserInputError
-from typing import List
+from typing import List, Optional
 import numpy
 import pygrgl
 
@@ -229,17 +229,19 @@ def build_mut_lookup(grg):
     return mut_lookup
 
 
-def fetch_ancestral(sequence, position, length):
+def fetch_ancestral(sequence: str, position: int, length: int) -> Optional[str]:
+    print(f"FETCH {position}")
     if length <= 0:
         return None
     if position <= 0:
         return None
     if position + length - 1 > len(sequence):
         return None
+    print(f" --> {sequence[position - 1 : position - 1 + length]}")
     return sequence[position - 1 : position - 1 + length]
 
 
-def equals_ignore_case(left, right):
+def equals_ignore_case(left: str, right: str) -> bool:
     return left.upper() == right.upper()
 
 
@@ -259,7 +261,7 @@ def polarize_grg(
     ancestral_seq: str,
     drop_if_no_match: bool = True,
     map_batch_size: int = DEFAULT_BATCH_SIZE,
-):
+) -> PolarizationStats:
     if map_batch_size <= 0:
         raise UserInputError("map_batch_size must be greater than zero")
 

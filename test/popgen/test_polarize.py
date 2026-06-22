@@ -1,12 +1,10 @@
 import os
-import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
 import numpy as np
 import pygrgl
-from pygrgl.clicmd.common import which
+from grapp.popgen import polarize_grg
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(THIS_DIR, ".."))
@@ -19,7 +17,6 @@ class TestPolarize(unittest.TestCase):
     def test_multiallelic_snv_site_from_vcf(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             input_vcf = os.path.join(INPUT_DIR, "multi.vcf")
-            ancestral_fasta = os.path.join(tmpdir, "ancestor.fa")
             input_grg = os.path.join(tmpdir, "multi.grg")
             output_grg = os.path.join(tmpdir, "multi.polar.grg")
 
@@ -27,28 +24,16 @@ class TestPolarize(unittest.TestCase):
             seq[14370 - 1] = "G"
             seq[17330 - 1] = "A"
             seq[1110696 - 1] = "T"
-            with open(ancestral_fasta, "w") as out:
-                out.write(">20\n")
-                sequence = "".join(seq)
-                for start in range(0, len(sequence), 80):
-                    out.write(sequence[start : start + 80] + "\n")
+            seq = "".join(seq)
 
-            construct_grg(input_vcf, input_grg, ignore_missing=True)
-            # TODO: this should probably use the polarize_grg() API instead of the command line
-            subprocess.check_call(
-                [
-                    "grapp",
-                    "polarize",
-                    input_grg,
-                    ancestral_fasta,
-                    "-o",
-                    output_grg,
-                    "--map-batch-size",
-                    "2",
-                ]
-            )
+            grg_file = construct_grg(input_vcf, input_grg, ignore_missing=True)
+            grg = pygrgl.load_mutable_grg(grg_file)
+            stats = polarize_grg(grg, seq, map_batch_size=2)
+            print(stats)
+            pygrgl.save_grg(grg, output_grg)
+            grg = pygrgl.load_immutable_grg(output_grg)
+            self.assertGreater(grg.num_mutations, 0)
 
-            grg = pygrgl.load_mutable_grg(output_grg, load_up_edges=True)
             values = np.eye(grg.num_mutations, dtype=np.int32)
             sample_matrix = pygrgl.matmul(grg, values, pygrgl.TraversalDirection.DOWN)
 
