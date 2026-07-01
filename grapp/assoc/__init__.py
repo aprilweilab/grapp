@@ -124,7 +124,11 @@ def read_pheno(
             header_line = i
             break
         # grg_pheno_sim header
-        if re.match(r"^((person_id|individual_id)\s+(phenotypes|phenotype))", line.strip(), re.IGNORECASE):
+        if re.match(
+            r"^((person_id|individual_id)\s+(phenotypes|phenotype))",
+            line.strip(),
+            re.IGNORECASE,
+        ):
             header_line = i
             break
 
@@ -136,7 +140,6 @@ def read_pheno(
             skiprows=header_line,
             engine="python",
             skipinitialspace=True,
-            na_filter=False,
         )
     else:
         df = pandas.read_csv(
@@ -145,7 +148,6 @@ def read_pheno(
             header=None,
             engine="python",
             skipinitialspace=True,
-            na_filter=False,
         )
 
     # Check column count

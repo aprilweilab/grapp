@@ -76,7 +76,6 @@ tsk_1 2.72
             self.assertEqual(indivs, indivs3)
             numpy.testing.assert_allclose(y, y3)
 
-
             # No header
             with open(phen_file, "w") as fout:
                 fout.write("""0 tsk_9 3.14
@@ -84,6 +83,15 @@ IGNORED tsk_2 54.123
 """)
             y, indivs = read_pheno(phen_file, return_indivs=True)
             self.assertEqual(indivs, ["tsk_9", "tsk_2"])
+            numpy.testing.assert_allclose(y, [3.14, 54.123])
+
+            # No header NA indivs
+            with open(phen_file, "w") as fout:
+                fout.write("""0 NA 3.14
+IGNORED NA 54.123
+""")
+            y, indivs = read_pheno(phen_file, return_indivs=True)
+            self.assertTrue(all(map(numpy.isnan, indivs)))
             numpy.testing.assert_allclose(y, [3.14, 54.123])
 
             # Single column
@@ -94,4 +102,3 @@ IGNORED tsk_2 54.123
             y, indivs = read_pheno(phen_file, return_indivs=True)
             self.assertEqual(indivs, ["NA", "NA"])
             numpy.testing.assert_allclose(y, [3.14, 54.123])
-

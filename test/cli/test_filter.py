@@ -17,6 +17,7 @@ class TestFilterCLI(unittest.TestCase):
     def setUpClass(cls):
         cls.grg_filename = construct_grg("test-200-samples.vcf.gz", "test.filtcli.grg")
 
+    @unittest.skip("Skip until pygrgl v2.10 is released")
     def test_filter_indivs(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             indivs_file = os.path.join(tmpdir, "indivs.txt")
@@ -35,6 +36,7 @@ class TestFilterCLI(unittest.TestCase):
             for i, ident in enumerate(indivs):
                 self.assertEqual(grg.get_individual_id(i), ident)
 
+    @unittest.skip("Skip until pygrgl v2.10 is released")
     def test_filter_haps(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             hap_file = os.path.join(tmpdir, "haps.txt")

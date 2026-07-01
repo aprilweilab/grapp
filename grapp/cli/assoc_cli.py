@@ -92,9 +92,17 @@ def run(args):
     grgs = [load_grg_calculator(g) for g in args.grg_input]
     num_indivs = grgs[0].num_individuals
 
+    def notna(value):
+        if value == "NA":
+            return False
+        try:
+            return not numpy.isnan(value)
+        except TypeError:
+            return True
+
     def check_iid_order(iids: List[str], filetype: str):
         if not grgs[0].has_individual_ids:
-            nonna = list(filter(lambda x: x != "NA", iids))
+            nonna = list(filter(notna, iids))
             if len(nonna) > 0:
                 print(
                     f"WARNING! IIDs were provided in {filetype} file (e.g., {nonna[0]}), but GRG has no individual IDs to cross-check against.",
