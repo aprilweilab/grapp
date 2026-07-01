@@ -5,7 +5,7 @@ on top of the Genotype Representation Graph (GRG) format. [GRG](https://github.c
 a file format and data structure that losslessly represents a genetic dataset. It has the advantage of
 compressing large datasets significantly, while also making calculations over that dataset extremely fast
 (see [the paper](https://www.nature.com/articles/s43588-024-00739-9) and the
-[core library](https://github.com/aprilweilab/grgl)).
+[main GRG documentation](https://grgl.readthedocs.io/en/latest/index.html)).
 
 Some notes on usage are below, and you can also browse [the Python documentation for grapp](https://grapp.readthedocs.io/en/latest/).
 
@@ -146,7 +146,7 @@ mutation filters:
 
 #### Library
 
-Library API reference document is [here](https://grapp.readthedocs.io/en/latest/). There are also some tutorials in the [GRG documentation](https://grgl.readthedocs.io/en/stable/tutorials/GWAS.html) (and correspond [Jupyter notebooks](https://github.com/aprilweilab/grgl/tree/main/doc/tutorials/notebooks)).
+Library API reference document is [here](https://grapp.readthedocs.io/en/latest/). There are also some tutorials in the [GRG documentation](https://grgl.readthedocs.io/en/latest/tutorials/GWAS.html) (and correspond [Jupyter notebooks](https://github.com/aprilweilab/grgl/tree/main/doc/tutorials/notebooks)).
 
 ### nn
 

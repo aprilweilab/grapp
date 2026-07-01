@@ -6,7 +6,7 @@ from grapp.grg_calculator import (
     _wrap_grg,
 )
 from scipy.stats import t as t_distribution
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Tuple
 import itertools
 import math
 import numpy
@@ -29,42 +29,89 @@ def _div_or_default(a, b, d):
     return numpy.divide(a, b, out=result, where=(b != 0))
 
 
-def read_plink_covariates(covar_path: str) -> numpy.typing.NDArray:
+def read_plink_covariates(
+    covar_path: str, return_indivs: bool = False, verbose: bool = False
+) -> Union[numpy.typing.NDArray, Tuple[numpy.typing.NDArray, List[str]]]:
     """
-    Reads a PLINK-style covariate file (no headers) and returns a NumPy matrix of covariate values.
-    The first two columns (FID/IID) are ignored. Optionally adds an intercept column of 1s.
+    Reads a PLINK-style covariate file: Optional header line, FID and IID in first two columns,
+    covariates in remaining columns. The first two columns (FID/IID) are ignored. Does not allow
 
     :param path: Path to the covariate file.
     :type path: str
-    :return: A NumPy array of shape (n_samples, n_covariates [+1 if intercept]).
-    :rtype: numpy.ndarray
+    :param return_indivs: If True, return a list of individual identifiers (IIDs from the plink file).
+    :type return_indivs: bool
+    :param verbose: Emit warnings/information about the file if True. Default: True.
+    :type verbose: bool
+    :return: The covariates as a numpy array of shape (n_samples, n_covariates). If return_indivs is True, then also
+        return a list of individual IDs (strings).
+    :rtype: Union[numpy.typing.NDArray, Tuple[numpy.typing.NDArray, List[str]]]
     """
     rows = []
+    num_covar = 0
+    covar_names = []
+    iids = []
     with open(covar_path, "r") as f:
-        for line in f:
+        for i, line in enumerate(f):
             parts = line.strip().split()
             if not parts:
                 continue
-            # skip FID/IID, keep covariates
-            cov_vals = [float(v) for v in parts[2:]]
-            rows.append(cov_vals)
+            if i == 0 and parts[0] == "FID":
+                assert (
+                    len(parts) > 1 and parts[1] == "IID"
+                ), "Header line must include FID followed by IID."
+                covar_names = parts[2:]
+                num_covar = len(covar_names)
+            else:
+                cov_vals = [float(v) for v in parts[2:]]
+                if num_covar == 0:
+                    num_covar = len(cov_vals)
+                assert num_covar == len(
+                    cov_vals
+                ), f"Inconsistent number of columns in covariates file (line: {i}, cols: {len(cov_vals)})"
+                rows.append(cov_vals)
+                iids.append(parts[1])
+    assert num_covar > 0, "No covariates are present in the file (only two columns)."
 
     # stack into (n_samples × K)
     X = numpy.vstack(rows) if rows else numpy.empty((0, 0))
 
+    if verbose:
+        print(f"Loaded {num_covar} covariates for {len(rows)} individuals")
+        if covar_names:
+            print(f"Covariate names: {covar_names}")
+    if return_indivs:
+        return (X, iids)
     return X
 
 
-def read_pheno(filename: str, verbose: bool = True) -> numpy.typing.NDArray:
+def read_pheno(
+    filename: str, return_indivs: bool = False, verbose: bool = True
+) -> Union[numpy.typing.NDArray, Tuple[numpy.typing.NDArray, List[str]]]:
     """
-    Reads a PLINK/GCTA/GRG-style phenotype file and returns the phenotype vector.
+    Reads a PLINK/GCTA/GRG-style phenotype file and returns the phenotype vector. In all cases, the
+    row order of the file must match the individual indexing order of the GRG.
+
+    PLINK-style: Optional header "FID IID PHEN". The first column is the family ID (ignored by grapp),
+    the second column is the IID (used for validation by grapp), and the third column in the numerical
+    phenotype value. The IID order is checked against the GRG individual ID order, when IDs are present
+    in the GRG (and also not "NA" in the plink input file).
+
+    GRG-style: Optional header "person_id phenotypes". The first column is checked against the GRG individual
+    ID order, when IDs are present in GRG (and also not "NA" in the phenotype file). The second column is
+    the numerical phenotype value.
+
+    If there is no header, the number of columns determines the type (3 = plink, 2 = GRG).
+
+    In all cases, columns can be tab-separated or space separated.
 
     :param path: Path to the phenotype file.
     :type path: str
+    :param return_indivs: If True, return a list of individual identifiers (IIDs from the plink file).
+    :type return_indivs: bool
     :param verbose: Emit warnings/information about the file if True. Default: True.
     :type verbose: bool
     :return: A one-dimensional NumPy array of phenotype values.
-    :rtype: numpy.ndarray
+    :rtype: Union[numpy.typing.NDArray, Tuple[numpy.typing.NDArray, List[str]]]
     """
     header_line = None
     with open(filename, "r") as f:
@@ -77,32 +124,55 @@ def read_pheno(filename: str, verbose: bool = True) -> numpy.typing.NDArray:
             header_line = i
             break
         # grg_pheno_sim header
-        if re.match(r"^(person_id\tphenotypes)", line.strip(), re.IGNORECASE):
+        if re.match(
+            r"^((person_id|individual_id)\s+(phenotypes|phenotype))",
+            line.strip(),
+            re.IGNORECASE,
+        ):
             header_line = i
             break
 
     # Read data starting from the header (if present)
     if header_line is not None:
         df = pandas.read_csv(
-            filename, sep=r"\s+", skiprows=header_line, engine="python"
+            filename,
+            sep=r"\s+",
+            skiprows=header_line,
+            engine="python",
+            skipinitialspace=True,
         )
     else:
-        df = pandas.read_csv(filename, sep=r"\s+", header=None, engine="python")
+        df = pandas.read_csv(
+            filename,
+            sep=r"\s+",
+            header=None,
+            engine="python",
+            skipinitialspace=True,
+        )
 
     # Check column count
-    if df.shape[1] not in (2, 3):
-        raise ValueError(f"Expected 2 or 3 columns, but found {df.shape[1]}.")
+    if df.shape[1] > 3:
+        raise ValueError(f"Expected 1, 2, or 3 columns, but found {df.shape[1]}.")
 
     # Extract last column and make sure it's a number
     try:
         last_col = df.iloc[:, -1].astype(float).to_numpy()
     except ValueError:
-        raise ValueError("Last column contains non-numeric values.")
+        raise ValueError(
+            "Last column should be phenotype, but it contains non-numeric values."
+        )
     if verbose:
         print(
-            f"Using the column {df.shape[1]} (the last one) for phenotype.",
+            f"Using the {df.shape[1]}th column (the last one) for phenotype ({df.columns[-1]}).",
             file=sys.stderr,
         )
+
+    if return_indivs:
+        if len(df.columns) >= 2:
+            iids = df.iloc[:, -2].to_list()
+        else:
+            iids = ["NA"] * len(df)
+        return (last_col, iids)
 
     return last_col
 

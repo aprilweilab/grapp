@@ -1,6 +1,7 @@
 from grg_pheno_sim.phenotype import sim_phenotypes, convert_to_phen
 from grapp.cli.util import load_immutable
 import argparse
+import numpy
 import os
 
 
@@ -47,6 +48,9 @@ def run(args):
     base = os.path.basename(args.grg_input)
     output_path = f"{base}.phen"
     grg = load_immutable(args.grg_input, load_up_edges=False)
+    assert (
+        grg.ploidy == 2
+    ), "Phenotype simulation currently only supports diploid datasets"
     phenotypes = sim_phenotypes(
         grg,
         num_causal=args.num_causal,
@@ -58,6 +62,16 @@ def run(args):
         effect_path=args.save_effects,
         header=True,
     )
+    # Resolve individual indices to individual identifiers, if possible.
+    if (
+        phenotypes["individual_id"].dtype in (int, numpy.int32, numpy.uint32)
+        and grg.has_individual_ids
+    ):
+        phenotypes["individual_id"] = list(
+            map(grg.get_individual_id, phenotypes["individual_id"])
+        )
+    else:
+        phenotypes["individual_id"] = ["NA"] * len(phenotypes)
     if args.out_file is None:
         args.out_file = output_path
     convert_to_phen(phenotypes, args.out_file, include_header=True)

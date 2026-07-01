@@ -66,6 +66,7 @@ def run(args):
         print(f"Samples: {grg.num_samples}")
         print(f"Individuals: {grg.num_individuals}")
         print(f"Phased? {'Yes' if grg.is_phased else 'No'}")
+        print(f"Ploidy: {grg.ploidy}")
         print(f"Nodes: {grg.num_nodes}")
         print(f"Edges: {grg.num_edges}")
         print(f"Has missing data?: {'Yes' if grg.has_missing_data else 'No'}")

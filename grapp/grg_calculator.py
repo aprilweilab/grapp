@@ -169,6 +169,15 @@ class GRGCalcInterface(ABC):
 
     @property
     @abstractmethod
+    def has_individual_ids(self) -> int:
+        pass
+
+    @abstractmethod
+    def get_individual_id(self, index: int) -> str:
+        pass
+
+    @property
+    @abstractmethod
     def num_mutations(self) -> int:
         pass
 
@@ -333,6 +342,13 @@ class GRGCalculator(GRGCalcInterface):
         return self.grg.num_individuals
 
     @property
+    def has_individual_ids(self) -> int:
+        return self.grg.has_individual_ids
+
+    def get_individual_id(self, index: int) -> str:
+        return self.grg.get_individual_id(index)
+
+    @property
     def num_mutations(self) -> int:
         return self.grg.num_mutations
 
@@ -427,6 +443,13 @@ class GRGSpMVCalculator(GRGCalcInterface):
     @property
     def num_individuals(self) -> int:
         return self._op.num_individuals
+
+    @property
+    def has_individual_ids(self) -> int:
+        return False  # TODO
+
+    def get_individual_id(self, index: int) -> str:
+        raise NotImplementedError("TODO")
 
     @property
     def num_mutations(self) -> int:

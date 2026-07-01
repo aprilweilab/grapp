@@ -7,12 +7,13 @@ from grapp.assoc import (
 from grapp.cli.util import pandas_to_tsv
 from grapp.grg_calculator import load_grg_calculator, GRGCalcInterface
 from grapp.util.exceptions import UserInputError
-from typing import Optional
+from typing import Optional, List
 import argparse
 import concurrent.futures
 import numpy
 import os
 import pandas
+import sys
 
 
 def add_options(subparser):
@@ -89,18 +90,49 @@ def do_single_gwas(
 
 def run(args):
     grgs = [load_grg_calculator(g) for g in args.grg_input]
+    num_indivs = grgs[0].num_individuals
+
+    def notna(value):
+        if value == "NA":
+            return False
+        try:
+            return not numpy.isnan(value)
+        except TypeError:
+            return True
+
+    def check_iid_order(iids: List[str], filetype: str):
+        if not grgs[0].has_individual_ids:
+            nonna = list(filter(notna, iids))
+            if len(nonna) > 0:
+                print(
+                    f"WARNING! IIDs were provided in {filetype} file (e.g., {nonna[0]}), but GRG has no individual IDs to cross-check against.",
+                    file=sys.stderr,
+                )
+        else:
+            for i in range(grgs[0].num_individuals):
+                assert iids[i] == "NA" or iids[i] == grgs[0].get_individual_id(
+                    i
+                ), f"The {i}th row of {filetype} file has an IID mismatch. Input file={iids[i]}, GRG={grgs[0].get_individual_id(0)}"
+
     if args.phenotypes is None:
         print("No phenotype provided; randomly generating phenotype values")
-        y = numpy.random.standard_normal(grgs[0].num_individuals)
+        y = numpy.random.standard_normal(num_indivs)
     else:
-        y = read_pheno(args.phenotypes)
+        y, iids = read_pheno(args.phenotypes, return_indivs=True, verbose=True)
         assert (
-            len(y) == grgs[0].num_individuals
-        ), f"Phenotype file had {len(y)} rows, expected {grgs[0].num_individuals}"
+            len(y) == num_indivs
+        ), f"Phenotype file had {len(y)} rows, expected {num_indivs}"
+        check_iid_order(iids, "phenotype")
 
     if args.covariates is not None:
         if args.covariates.endswith(".txt"):
-            C = read_plink_covariates(args.covariates)
+            C, iids = read_plink_covariates(
+                args.covariates, return_indivs=True, verbose=True
+            )
+            assert (
+                len(iids) == num_indivs
+            ), "Read {len(iids)} covariates, but GRG has {num_indivs} individuals"
+            check_iid_order(iids, "covariate")
         else:
             assert args.covariates.endswith(
                 ".tsv"
