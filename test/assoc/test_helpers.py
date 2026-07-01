@@ -21,10 +21,11 @@ class TestAssocHelpers(unittest.TestCase):
 
             # Header
             with open(cv_file, "w") as fout:
-                fout.write("""FID IID SITE AGE DOB BMI SMOKE
+                contents = """FID IID SITE AGE DOB BMI SMOKE
 0 tsk_0 11.1 2.1 3.0 100 99.999999
 0 tsk_1 12.1 22.1 23.0 120 19.191919
-""")
+"""
+                fout.write(contents)
             C, indivs = read_plink_covariates(cv_file, return_indivs=True)
             self.assertEqual(indivs, ["tsk_0", "tsk_1"])
             numpy.testing.assert_allclose(C[0, :], [11.1, 2.1, 3.0, 100, 99.999999])
@@ -32,9 +33,10 @@ class TestAssocHelpers(unittest.TestCase):
 
             # No header
             with open(cv_file, "w") as fout:
-                fout.write("""0 tsk_9 3.14
+                contents = """0 tsk_9 3.14
 IGNORED tsk_2 54.123
-""")
+"""
+                fout.write(contents)
             C, indivs = read_plink_covariates(cv_file, return_indivs=True)
             self.assertEqual(indivs, ["tsk_9", "tsk_2"])
             numpy.testing.assert_allclose(C[0, :], [3.14])
@@ -48,57 +50,63 @@ IGNORED tsk_2 54.123
 
             # Plink-style Header
             with open(phen_file, "w") as fout:
-                fout.write("""FID IID PHENOTYPE1
+                contents = """FID IID PHENOTYPE1
 0 tsk_0 1.109
 0 tsk_1 2.72
-""")
+"""
+                fout.write(contents)
             y, indivs = read_pheno(phen_file, return_indivs=True)
             self.assertEqual(indivs, ["tsk_0", "tsk_1"])
             numpy.testing.assert_allclose(y, [1.109, 2.72])
 
             # GRG-style Header
             with open(phen_file, "w") as fout:
-                fout.write("""person_id      phenotypes
+                contents = """person_id      phenotypes
 tsk_0     1.109
 tsk_1 2.72
-""")
+"""
+                fout.write(contents)
             y2, indivs2 = read_pheno(phen_file, return_indivs=True)
             self.assertEqual(indivs, indivs2)
             numpy.testing.assert_allclose(y, y2)
 
             # GRG-style Header 2
             with open(phen_file, "w") as fout:
-                fout.write("""individual_id      phenotypes
+                contents = """individual_id      phenotypes
 tsk_0     1.109
 tsk_1 2.72
-""")
+"""
+                fout.write(contents)
             y3, indivs3 = read_pheno(phen_file, return_indivs=True)
             self.assertEqual(indivs, indivs3)
             numpy.testing.assert_allclose(y, y3)
 
             # No header
             with open(phen_file, "w") as fout:
-                fout.write("""0 tsk_9 3.14
+                contents = """0 tsk_9 3.14
 IGNORED tsk_2 54.123
-""")
+"""
+                fout.write(contents)
             y, indivs = read_pheno(phen_file, return_indivs=True)
             self.assertEqual(indivs, ["tsk_9", "tsk_2"])
             numpy.testing.assert_allclose(y, [3.14, 54.123])
 
             # No header NA indivs
             with open(phen_file, "w") as fout:
-                fout.write("""0 NA 3.14
+                contents = """0 NA 3.14
 IGNORED NA 54.123
-""")
+"""
+                fout.write(contents)
             y, indivs = read_pheno(phen_file, return_indivs=True)
             self.assertTrue(all(map(numpy.isnan, indivs)))
             numpy.testing.assert_allclose(y, [3.14, 54.123])
 
             # Single column
             with open(phen_file, "w") as fout:
-                fout.write("""3.14
+                contents = """3.14
 54.123
-""")
+"""
+                fout.write(contents)
             y, indivs = read_pheno(phen_file, return_indivs=True)
             self.assertEqual(indivs, ["NA", "NA"])
             numpy.testing.assert_allclose(y, [3.14, 54.123])

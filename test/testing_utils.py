@@ -227,10 +227,10 @@ def which(exe: str, required=False) -> Optional[str]:
     return result
 
 
-GRAPP = which("grapp", required=True)
+MAIN_PY = os.path.join(REPO_ROOT, "grapp", "cli", "main.py")
 
 
 def grapp_run(*command) -> str:
     return subprocess.check_output(
-        [GRAPP] + list(command), stderr=subprocess.STDOUT
+        ["python", MAIN_PY] + list(command), stderr=subprocess.STDOUT
     ).decode("utf-8")

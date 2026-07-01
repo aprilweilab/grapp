@@ -43,14 +43,7 @@ class TestFilterCLI(unittest.TestCase):
             grg_out = os.path.join(tmpdir, "out.grg")
 
             with open(hap_file, "w") as fout:
-                fout.write("""8
-9
-32
-33
-0
-1
-50
-51""")
+                fout.write("\n".join([8, 9, 32, 33, 0, 1, 50, 51]))
 
             grapp_run("filter", "--hap-samples", hap_file, self.grg_filename, grg_out)
             self.assertTrue(os.path.isfile(grg_out))
