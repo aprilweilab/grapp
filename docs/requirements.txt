@@ -4,4 +4,4 @@ pygrgl
 pyigd
 scipy
 scikit-learn
-sphinx-rtd-theme
+pydata-sphinx-theme
