@@ -1,7 +1,8 @@
-grg_pheno_sim>=1.4
+grg_pheno_sim>=1.4,<2.0
 numpy
 pandas
-pygrgl>=2.7
-pyigd>=1.3
+pyfaidx
+pygrgl>=2.9,<3.0
+pyigd>=1.3,<2.0
 scikit-learn
 scipy

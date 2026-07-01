@@ -23,6 +23,7 @@ def construct_grg(
     output_file: Optional[str] = None,
     jobs: int = 6,
     is_test_input: bool = True,
+    ignore_missing: bool = False,
 ) -> str:
     cmd = [
         "grg",
@@ -34,6 +35,8 @@ def construct_grg(
         str(jobs),
         os.path.join(INPUT_DIR, input_file) if is_test_input else input_file,
     ]
+    if ignore_missing:
+        cmd.append("--ignore-missing")
     if output_file is not None:
         cmd.extend(["-o", output_file])
     else:
