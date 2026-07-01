@@ -36,18 +36,18 @@ def grg_save_individuals(
         grg = pygrgl.load_immutable_grg(grg_or_filename, load_up_edges=True)
     else:
         grg = grg_or_filename
+    id2index = {grg.get_individual_id(i): i for i in range(grg.num_individuals)}
     sample_nodes = []
-    id_set = set(individual_ids)
-    for i in range(grg.num_individuals):
-        indiv = grg.get_individual_id(i)
-        if indiv in id_set:
-            base_sample = i * grg.ploidy
+    for kept_id in individual_ids:
+        index = id2index.get(kept_id)
+        if index is None:
+            if not allow_extra:
+                raise UserInputError(
+                    f"Found individual that was not in the GRG: {kept_id}"
+                )
+        else:
+            base_sample = index * grg.ploidy
             sample_nodes.extend(list(range(base_sample, base_sample + grg.ploidy)))
-            id_set.remove(indiv)
-    if not allow_extra and id_set:
-        raise UserInputError(
-            f"Found individuals that were not in the GRG: {','.join(id_set)}"
-        )
     if verbose:
         print(f"Keeping {len(sample_nodes)} haplotypes")
     pygrgl.save_subset(

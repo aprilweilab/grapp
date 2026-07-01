@@ -7,6 +7,7 @@ import numpy
 import os
 import pygrgl
 import shutil
+import sys
 import subprocess
 
 try:
@@ -16,6 +17,7 @@ except ImportError:
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 INPUT_DIR = os.path.join(THIS_DIR, "input")
+REPO_ROOT = os.path.join(THIS_DIR, "..")
 
 
 def construct_grg(
@@ -200,3 +202,35 @@ def _wrap_grg_spmv(grg: Union[pygrgl.GRG, GRGCalcInterface]) -> GRGCalcInterface
 WRAP_GRG_PARAMS = [(lambda g: g,), (GRGCalculator,)]
 if _pygrgl_spmv is not None:
     WRAP_GRG_PARAMS.append((_wrap_grg_spmv,))
+
+
+def which(exe: str, required=False) -> Optional[str]:
+    """
+    Find an executable on $PATH or in the python system path.
+    """
+    try:
+        result = (
+            subprocess.check_output(["which", exe], stderr=subprocess.STDOUT)
+            .decode("utf-8")
+            .strip()
+        )
+    except subprocess.CalledProcessError:
+        result = None
+    if result is None:
+        for p in [*sys.path, REPO_ROOT]:
+            p = os.path.join(p, exe)
+            if os.path.isfile(p):
+                result = p
+                break
+    if required and result is None:
+        raise RuntimeError(f"Could not find executable {exe}")
+    return result
+
+
+GRAPP = which("grapp", required=True)
+
+
+def grapp_run(*command) -> str:
+    return subprocess.check_output(
+        [GRAPP] + list(command), stderr=subprocess.STDOUT
+    ).decode("utf-8")
