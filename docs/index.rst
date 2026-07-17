@@ -9,6 +9,7 @@ grapp Documentation
    API Reference <grapp>
    Tool File Formats <formats>
    Compatible Math Libraries <compatible>
+   Filtering <filtering>
 
 grapp is a Python library for performing highly scalable, highly efficient calculations on
 (GRG) files. `GRG is a graph-based data structure and file format format <https://grgl.readthedocs.io/en/stable/concepts.html>`_.

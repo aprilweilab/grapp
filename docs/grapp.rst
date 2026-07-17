@@ -68,6 +68,8 @@ Nearest Neighbor Comparisons
    :undoc-members:
    :show-inheritance:
 
+.. _filtering_apis:
+
 Filtering, Export, etc.
 -----------------------------
 
