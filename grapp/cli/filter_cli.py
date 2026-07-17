@@ -10,9 +10,11 @@ from grapp.util.simple import (
     VariantType,
     get_variant_type,
     hwe,
+    ref_hwe,
 )
 from grapp.util.exceptions import UserInputError
 from grapp.cli.util import load_immutable
+import numpy
 from typing import Set
 import argparse
 import os
@@ -139,14 +141,14 @@ def add_options(subparser: argparse.ArgumentParser):
         "--min-alleles",
         type=int,
         default=None,
-        help="Only keep sites with at least this many alleles. Counts all REF alleles as 1.",
+        help="Only keep sites with at least this many alleles. Counts all unique REF and ALT alleles. ",
     )
     mutation_group.add_argument(
         "-M",
         "--max-alleles",
         type=int,
         default=None,
-        help="Only keep sites with at most this many alleles. Counts all REF alleles as 1. "
+        help="Only keep sites with at most this many alleles. Counts all unique REF and ALT alleles. "
         "Use '-m 2 -M 2 -v snps' to view only biallelic SNPs.",
     )
     mutation_group.add_argument(
@@ -154,7 +156,12 @@ def add_options(subparser: argparse.ArgumentParser):
         "--HWE",
         type=float,
         default=None,
-        help="Drop all variants with a Hardy-Weinberg two-sided p-value less than the given value.",
+        help="Drop all variants with a Hardy-Weinberg equilibrium (HWE) two-sided p-value less than the given value.",
+    )
+    mutation_group.add_argument(
+        "--multi-ref",
+        action="store_true",
+        help="Compute REF values for multi-allelic sites when filtering by HWE. Slower than the default HWE filtering.",
     )
 
 
@@ -212,6 +219,13 @@ def run(args):
             freqs = allele_frequencies(grg)
         if args.HWE is not None:
             hwe_pvalues = hwe(grg, jobs=args.jobs, show_progress=True)
+            if args.multi_ref:
+                hwe_ref_pvs = ref_hwe(
+                    grg,
+                    jobs=args.jobs,
+                    show_progress=True,
+                    default=numpy.array(hwe_pvalues),
+                )
 
         def filter_method(grg: pygrgl.GRG, mut_id: int):
             mut = grg.get_mutation_by_id(mut_id)
@@ -231,8 +245,11 @@ def run(args):
                 my_type = get_variant_type(mut)
                 if my_type not in args.types:
                     return False
-            if args.HWE is not None and hwe_pvalues[mut_id] < args.HWE:
-                return False
+            if args.HWE is not None:
+                if hwe_pvalues[mut_id] < args.HWE or (
+                    args.multi_ref and hwe_ref_pvs[mut_id] < args.HWE
+                ):
+                    return "drop_site"  # Special value
             return True
 
         kept, dropped = grg_save_mut_filter(

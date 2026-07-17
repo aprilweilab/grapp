@@ -6,6 +6,7 @@ from grapp.grg_calculator import (
     GRGCalcInterface as _GRGCalcInterface,
     _wrap_grg,
 )
+from grapp.util.exceptions import UserInputError
 from enum import Enum
 from multiprocessing import Pool
 from typing import Union, Tuple, List, Optional, Set
@@ -214,6 +215,218 @@ def _star_snphwe_pygrgl(arglist):
     return (pygrgl.hwe_exact_pv(het_A, hom_A, other), mut_ids)
 
 
+def get_zygosities(grg: pygrgl.GRG) -> numpy.typing.NDArray:
+    """
+    For a diploid dataset, return information about the homo/heterzygosity of every variant.
+    Result is a matrix with 4 rows and grg.num_mutations columns. The rows are:
+
+    * The number of homozygotes for each mutation (ALT of the variant)
+    * The number of heterozygotes for each mutation
+    * The number of homozygote-missing alleles for each mutation (i.e., corresponding site)
+    * the number of heterozygote-missing alleles for each mutation
+
+    :param grg: The GRG.
+    :type grg: pygrgl.GRG.
+    :return: :math:`4 \\times M` matrix, with rows as described above.
+    :rtype: numpy.ndarray
+    """
+    if grg.ploidy != 2:
+        raise UserInputError(
+            f"get_zygosities requires for ploidy=2 (dataset ploidy={grg.ploidy})"
+        )
+    if grg.has_missing_data:
+        miss_mat = numpy.zeros((2, grg.num_mutations), dtype=numpy.uint32)
+    else:
+        miss_mat = None
+    inmat = numpy.vstack(
+        [
+            numpy.zeros(grg.num_samples, dtype=numpy.uint32),  # hom only
+            numpy.ones(grg.num_samples, dtype=numpy.uint32),  # het and hom
+        ]
+    )
+    zyg_info = pygrgl.matmul(
+        grg,
+        inmat,
+        pygrgl.TraversalDirection.UP,
+        init="xtx",
+        miss=miss_mat,
+    )
+    hom_A = zyg_info[0] // 2
+    het_A = zyg_info[1] - (zyg_info[0] * 2)
+    if miss_mat is not None:
+        hom_miss = miss_mat[0] // 2
+        het_miss = miss_mat[1] - (miss_mat[0] * 2)
+    else:
+        hom_miss = numpy.zeros(hom_A.shape, dtype=numpy.uint32)
+        het_miss = numpy.zeros(hom_A.shape, dtype=numpy.uint32)
+    return numpy.vstack((hom_A, het_A, hom_miss, het_miss))
+
+
+def hwe_from_counts(
+    het_A: List[int],
+    hom_A: List[int],
+    other: List[int],
+    jobs: int = 1,
+    show_progress: bool = False,
+) -> List[float]:
+    """
+    For the given heterozygous, homozygous, and "other" counts, compute the HWE exact p-values.
+
+    :param het_A: List of integer counts for the number of heterozygous individuals (in a focal allele).
+    :type het_A: List[int]
+    :param hom_A: List of integer counts for the number of homozygous individuals (in a focal allele).
+    :type hom_A: List[int]
+    :param other: List of integer counts for the number of individuals that do not contain the
+        focal allele at all.
+    :type other: List[int]
+    :param jobs: Number of threads to use.
+    :type jobs: int
+    :param show_progress: Write progress information to stderr? Default: False.
+    :type show_progress: bool
+    :return: A list of p-values, one for each focal allele.
+    :rtype: List[float]
+    """
+    assert len(het_A) == len(hom_A), "Input lists must all be the same length."
+    assert len(other) == len(het_A), "Input lists must all be the same length."
+    if show_progress:
+        print(f"Calculating HWE p-values...", file=sys.stderr)
+    pvalues = [0.0] * len(het_A)
+    if jobs == 1:
+        for i in tqdm(range(len(het_A)), disable=not show_progress):
+            pvalues[i] = pygrgl.hwe_exact_pv(het_A[i], hom_A[i], other[i])
+    else:
+        batch_size = 1000
+        arglist = [(het_A[i], hom_A[i], other[i], i) for i in range(len(het_A))]
+        with Pool(jobs) as pool:
+            results = list(
+                tqdm(
+                    pool.imap_unordered(_star_snphwe_pygrgl, arglist, batch_size),
+                    total=len(het_A),
+                    disable=not show_progress,
+                )
+            )
+            for result, b in results:
+                pvalues[b] = float(result)
+    if show_progress:
+        print(f"Done.", file=sys.stderr)
+    return pvalues
+
+
+def site_samples(grg: pygrgl.GRG, multi_list: List[List[int]]) -> numpy.typing.NDArray:
+    """
+    Given a list of sites (each site being a list of MutationIDs), return a bool numpy matrix that
+    represents the samples that have either the ALT or a missing allele at that site.
+
+    :param grg: The GRG.
+    :type grg: pygrgl.GRG.
+    :param multi_list: A list of "sites", where each site is a list of integer MutationIDs. Those
+        mutations all have the same base-pair position, hence are at the same site.
+    :type multi_list: List[List[int]]
+    :return: Numpy matrix of dimension :math:`K \times N`, where :math:`K` is the number of sites
+        that was passed in, and :math:`N` is grg.num_samples.
+    :rtype: numpy.ndarray
+    """
+    k = len(multi_list)
+    input_mat = numpy.zeros((k, grg.num_mutations), dtype=bool)
+    if grg.has_missing_data:
+        miss_mat = numpy.zeros((k, grg.num_mutations), dtype=bool)
+    else:
+        miss_mat = None
+    for j, indices in enumerate(multi_list):
+        input_mat[j, indices] = 1
+        # For missingness, we only populate the first mutation, because all mutations at a site
+        # share the same missingness node.
+        if miss_mat is not None:
+            miss_mat[j, indices[0]] = 1
+    return pygrgl.matmul(grg, input_mat, pygrgl.TraversalDirection.DOWN, miss=miss_mat)
+
+
+def ref_hwe(
+    grg: pygrgl.GRG,
+    jobs: int = 1,
+    show_progress: bool = False,
+    default: Union[numpy.typing.NDArray, float] = numpy.nan,
+) -> numpy.typing.NDArray:
+    """
+    For every mutation, return the HWE p-value comparing REF against not-REF. For bi-allelic
+    sites return a defualt value, since the (REF, not REF) p-value is the same as the (ALT, not ALT)
+    p-value. For multi-allelic sites, performs multiple graph traversals (slow) to retrieve the REF
+    sample list to explicitly compute the homozygous/heterzygous counts.
+
+    WARNING: This is an expensive operation on large datasets.
+
+    :param grg: The GRG.
+    :type grg: pygrgl.GRG
+    :param jobs: The number of threads to use when computing p-values.
+    :type jobs: int
+    :param show_progress: When True, show a progress bar.
+    :type show_progress: bool
+    :param default: Either a scalar value or an array of length grg.num_mutations. When a site is
+        bi-allelic, use this default value. Default: NaN.
+    :type default: Union[numpy.ndarray, float]
+    :return: Array of grg.num_mutations p-values.
+    :rtype: numpy.ndarray
+    """
+    if grg.ploidy != 2:
+        raise UserInputError(
+            f"HWE only works for ploidy=2 (dataset ploidy={grg.ploidy})"
+        )
+    if show_progress:
+        print(
+            f"Calculating multi-allelic heterozygote and homozygote counts...",
+            file=sys.stderr,
+        )
+
+    miss_counts: Union[int, numpy.typing.NDArray] = 0
+    if grg.has_missing_data:
+        miss_counts = numpy.zeros((1, grg.num_mutations), dtype=numpy.int32)
+        input_mat = numpy.ones((1, grg.num_samples), dtype=numpy.int32)
+        acounts = grg.matmul(input_mat, pygrgl.TraversalDirection.UP, miss=miss_counts)[
+            0
+        ]
+        miss_counts = miss_counts[0]
+
+    # Get only the multi-allelic sites.
+    multi_list = multi_allelic_muts(grg)
+    hom_REF = numpy.zeros(len(multi_list), dtype=numpy.uint32)
+    het_REF = numpy.zeros(len(multi_list), dtype=numpy.uint32)
+
+    # For each batch of multi-allelic sites, get the sample list of all ALT and missing alleles,
+    # then invert it so we can count hom/het.
+    batch_size = 256
+    for i in tqdm(range(0, len(multi_list), batch_size), disable=not show_progress):
+        batch = multi_list[i : i + batch_size]
+        ref_samples = ~site_samples(grg, batch)
+        assert ref_samples.shape[1] % 2 == 0, "Internal error: ploidy == 2 expected"
+        dosage = ref_samples[:, 0::2].astype(numpy.uint32) + ref_samples[
+            :, 1::2
+        ].astype(numpy.uint32)
+        hom_REF[i : i + len(batch)] = numpy.count_nonzero(dosage == 2, axis=1)
+        het_REF[i : i + len(batch)] = numpy.count_nonzero(dosage == 1, axis=1)
+    n_REF = het_REF + 2 * hom_REF
+    if show_progress:
+        print(f"Done.", file=sys.stderr)
+
+    N = (grg.num_samples - miss_counts) // 2
+    other = numpy.maximum(0, (N - (het_REF + hom_REF))).tolist()
+
+    # Faster access.
+    pvalues_REF = hwe_from_counts(
+        het_REF.tolist(),
+        hom_REF.tolist(),
+        other,
+        jobs=jobs,
+        show_progress=show_progress,
+    )
+    if isinstance(default, float):
+        pvalues = numpy.full(grg.num_mutations, default)
+    else:
+        pvalues = default.copy()
+    for i, indices in enumerate(multi_list):
+        pvalues[list(indices)] = pvalues_REF[i]
+    return pvalues
+
+
 def hwe(
     grg: pygrgl.GRG,
     jobs: int = 1,
@@ -235,80 +448,43 @@ def hwe(
     :type jobs: int
     :param show_progress: Show progress bar on sys.stderr. Default: False.
     :type show_progress: bool
-    :return: A numpy array of length num_mutations, containing a p-value for each mutation.
+    :return: A numpy array of length num_mutations, containing a p-value for each mutation. If the
     :rtype: numpy.array
     """
-    # TODO: better testing with missing data in general, but also GRGL should be able to detect whether
-    # there are partially missing genotypes as well.
-    if grg.has_missing_data:
-        print(
-            "WARNING! HWE implementation is formulated for missingness to be per-individual, not per-haplotype. "
-            "Your results may be inaccurate if you have partially missing genotypes",
-            file=sys.stderr,
+    if grg.ploidy != 2:
+        raise UserInputError(
+            f"HWE only works for ploidy=2 (dataset ploidy={grg.ploidy})"
         )
-        raise RuntimeError("Missing data not yet supported for HWE")
-
     if show_progress:
         print(f"Calculating heterozygote and homozygote counts...", file=sys.stderr)
-    # Get the het and hom count information for all variants
-    inmat = numpy.vstack(
-        [
-            numpy.zeros(grg.num_samples, dtype=numpy.int32),  # hom only
-            numpy.ones(grg.num_samples, dtype=numpy.int32),  # het and hom
-        ]
-    )
-    zyg_info = pygrgl.matmul(
-        grg,
-        inmat,
-        pygrgl.TraversalDirection.UP,
-        init="xtx",
-    )
-    del inmat
-    hom_A = zyg_info[0] // 2
-    het_A = zyg_info[1] - (zyg_info[0] * 2)
-    del zyg_info
+    zygosities = get_zygosities(grg)
+
+    het_missing = numpy.sum(zygosities[3])
+    if het_missing > 0:
+        print(
+            "WARNING! Dataset has heterozygous missingness. The HWE implementation is formulated for missingness "
+            "by individual (homozygous missingness). Accuracy of HWE p-values may be affected.",
+            file=sys.stderr,
+        )
+
+    hom_A = zygosities[0, :]
+    het_A = zygosities[1, :]
     n_A = het_A + 2 * hom_A
     if show_progress:
         print(f"Done.", file=sys.stderr)
 
-    # TODO: subtract missingness from "other"
-    other = (grg.num_individuals - (het_A + hom_A)).tolist()
+    # We treat every individual that has at least one allele missing as being missing. This breaks down
+    # when there is a lot of heterozygous missingness (see WARNING above).
+    missing_indivs = zygosities[2] + zygosities[3]
+    N = grg.num_individuals - missing_indivs
+    other = numpy.maximum(0, (N - (het_A + hom_A))).tolist()
 
     # Faster access.
     hom_A = hom_A.tolist()
     het_A = het_A.tolist()
-
-    if show_progress:
-        print(f"Calculating HWE p-values...", file=sys.stderr)
-    pvalues = numpy.zeros(grg.num_mutations)
-    if jobs == 1:
-        progress = (lambda x: x) if not show_progress else tqdm
-        for mut_id in range(grg.num_mutations):
-            pvalues[mut_id] = pygrgl.hwe_exact_pv(
-                het_A[mut_id], hom_A[mut_id], other[mut_id]
-            )
-    else:
-        batch_size = 1000
-        arglist = [
-            (het_A[mut_id], hom_A[mut_id], other[mut_id], mut_id)
-            for mut_id in range(grg.num_mutations)
-        ]
-        with Pool(jobs) as pool:
-            if show_progress:
-                results = list(
-                    tqdm(
-                        pool.imap_unordered(_star_snphwe_pygrgl, arglist, batch_size),
-                        total=grg.num_mutations,
-                    )
-                )
-            else:
-                results = list(
-                    pool.imap_unordered(_star_snphwe_pygrgl, arglist, batch_size)
-                )
-            for result, b in results:
-                pvalues[b] = result
-    if show_progress:
-        print(f"Done.", file=sys.stderr)
+    pvalues = numpy.array(
+        hwe_from_counts(het_A, hom_A, other, jobs=jobs, show_progress=show_progress)
+    )
     if return_counts:
         return pvalues, n_A
     return pvalues
@@ -318,6 +494,7 @@ def hwe_df(
     grg: pygrgl.GRG,
     jobs: int = 1,
     show_progress: bool = False,
+    all_multi: bool = True,
 ) -> pandas.DataFrame:
     """
     Compute hardy-weinberg p-values for all variants in the GRG. Missing data is not yet supported.
@@ -334,11 +511,64 @@ def hwe_df(
     :type jobs: int
     :param show_progress: Show progress bar on sys.stderr. Default: False.
     :type show_progress: bool
-    :return: A DataFrame containing "POS", "ALT", "COUNT", and "P".
+    :param all_multi: Compute p-values for all combinations of multi-allelic sites (e.g., including
+        the REF allele). For a bi-allelic site, there is a single p-value that represents the pair
+        (REF, ALT). However, for a multi-allelic site, e.g. (REF, A1, A2), there are three combos
+        (A1, not A1), (A2, not A2), and (REF, not REF). Setting this parameter to False will only
+        compute two p-values: (A1, not A1) and (A2, not A2). Leaving it as True will additionally
+        compute (REF, not REF).
+    :type all_multi: bool
+    :return: A DataFrame containing "POS", "ALT", "COUNT", and "P". If all_multi=True, then also
+        includes column "REFP" for the REF allele's p-value.
     :rtype: pandas.DataFrame
     """
-    pvalues, n_A = hwe(grg, jobs=jobs, show_progress=show_progress, return_counts=True)
-    return common_mut_dataframe(grg, COUNT=n_A, P=pvalues)
+    if show_progress and not all_multi:
+        num_multi = len(multi_allelic_muts(grg))
+        if num_multi > 0:
+            print(
+                f"WARNING! Your data contains {num_multi} multi-allelic sites, but HWE does not compute REF vs. not-REF "
+                "p-values by default. You may want to use --multi-ref to force this (slow) calculation, if you care "
+                "about multi-allelic sites.",
+                file=sys.stderr,
+            )
+    pvalues, nA = hwe(grg, jobs=jobs, show_progress=show_progress, return_counts=True)
+    df = common_mut_dataframe(grg, COUNT=nA, P=pvalues)
+    if all_multi:
+        ref_pvs = ref_hwe(
+            grg,
+            jobs=jobs,
+            show_progress=show_progress,
+            default=numpy.array(pvalues),
+        )
+        df["REFP"] = ref_pvs
+    return df
+
+
+def multi_allelic_muts(grg: pygrgl.GRG) -> List[List[int]]:
+    """
+    Return a list of MutationId lists, where each sublist represents a set of Mutations that exist
+    at the same site (base-pair position). An empty list implies the data is bi-allelic.
+
+    :param grg: The GRG containing the mutations.
+    :type grg: pygrgl.GRG
+    :return: A list of lists [i, i+1, ..., i+k], which are MutationIds that has the same underlying
+        base-pair position (site). An empty list implies the data is bi-allelic.
+    :return: List[List[int]]
+    """
+    result: List[List[int]] = []
+    prev_pos = -1
+    for i in range(grg.num_mutations):
+        mut = grg.get_mutation_by_id(i)
+        if mut.position == prev_pos:
+            result[-1].append(i)
+        else:
+            if result and len(result[-1]) == 1:
+                result.pop()
+            result.append([i])
+            prev_pos = mut.position
+    if result and len(result[-1]) == 1:
+        result.pop()
+    return result
 
 
 def site_alleles(
@@ -350,7 +580,8 @@ def site_alleles(
     Compute the number of alleles at the site associated with each mutation (variant).
     For example, if there is a site with 3 variants A>T, A>G, A>C, then each of those
     variants (mutations) will have a "4" in their result. Each variant is always bi-allelic,
-    but the site it is associated can have an arbitrary number of alleles.
+    but the site it is associated can have an arbitrary number of alleles. This function
+    counts the number of distinct REF alleles, so the result is count(REF) + count(ALT).
 
     :param grg: The GRG.
     :type grg: pygrgl.GRG

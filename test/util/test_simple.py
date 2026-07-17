@@ -3,6 +3,9 @@ from grapp.util.simple import (
     site_alleles,
     variants_of_types,
     VariantType,
+    multi_allelic_muts,
+    get_zygosities,
+    site_samples,
 )
 import numpy
 import os
@@ -13,7 +16,7 @@ import unittest
 
 THIS_DIR = os.path.dirname(os.path.realpath(__file__))
 sys.path.append(os.path.join(THIS_DIR, ".."))
-from testing_utils import construct_grg, split_and_load
+from testing_utils import construct_grg, make_grg_sparse_mat
 
 JOBS = 4
 CLEANUP = True
@@ -81,6 +84,112 @@ class TestSimple(unittest.TestCase):
         numpy.testing.assert_allclose(result["P"], expect["P"])
         numpy.testing.assert_allclose(result["COUNT"], expect["COUNT"])
 
+    def test_multi_allelic_muts(self):
+        grg = make_grg_sparse_mat(
+            [0, 1, 2, 2, 3, 4, 4],
+            ["A"] * 7,
+            ["C"] * 7,
+            numpy.zeros((10, 7)),
+        )
+        result = multi_allelic_muts(grg)
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0], [2, 3])
+        self.assertEqual(result[1], [5, 6])
+
+        grg = make_grg_sparse_mat(
+            [0, 1, 2, 3, 4],
+            ["A"] * 5,
+            ["C"] * 5,
+            numpy.zeros((1, 5)),
+        )
+        result = multi_allelic_muts(grg)
+        self.assertEqual(len(result), 0)
+
+    def test_site_samples(self):
+        # First, test without any missingness.
+        grg = make_grg_sparse_mat(
+            [0, 1, 2, 2, 3, 4, 4],
+            ["A"] * 7,
+            ["C"] * 7,
+            numpy.array(
+                [
+                    [0, 1, 1, 0, 0, 0, 1],
+                    [1, 0, 0, 0, 1, 1, 0],
+                    [1, 1, 0, 0, 0, 1, 0],
+                    [0, 1, 0, 1, 0, 1, 0],
+                ]
+            ),
+        )
+        multi_list = multi_allelic_muts(grg)
+        result = site_samples(grg, multi_list)
+        numpy.testing.assert_equal(
+            result,
+            numpy.array(
+                [
+                    [1, 0, 0, 1],
+                    [1, 1, 1, 1],
+                ],
+                dtype=bool,
+            ),
+        )
+        self.assertTrue(result.dtype == bool)
+        numpy.testing.assert_equal(
+            ~result,
+            numpy.array(
+                [
+                    [0, 1, 1, 0],
+                    [0, 0, 0, 0],
+                ],
+                dtype=bool,
+            ),
+        )
+
+        # Now with missingness.
+        grg = make_grg_sparse_mat(
+            [0, 1, 2, 2, 3, 4, 4],
+            ["A"] * 7,
+            ["C"] * 7,
+            numpy.array(
+                [
+                    [0, 1, 1, 0, 0, 0, 0],
+                    [1, 0, 0, 0, 1, 1, 0],
+                    [0, 1, 0, 0, 0, 1, 0],
+                    [0, 0, 0, 1, 0, 0, 0],
+                ]
+            ),
+            miss=numpy.array(
+                [
+                    [0, 0, 0, 0, 0, 1, 1],
+                    [0, 0, 1, 1, 0, 0, 0],
+                    [1, 0, 1, 1, 0, 0, 0],
+                    [0, 1, 0, 0, 0, 0, 0],
+                ]
+            ),
+        )
+        multi_list = multi_allelic_muts(grg)
+        result = site_samples(grg, multi_list)
+        numpy.testing.assert_equal(
+            result,
+            numpy.array(
+                [
+                    [1, 1, 1, 1],
+                    [1, 1, 1, 0],
+                ],
+                dtype=bool,
+            ),
+        )
+        self.assertTrue(result.dtype == bool)
+        numpy.testing.assert_equal(
+            ~result,
+            numpy.array(
+                [
+                    [0, 0, 0, 0],
+                    [0, 0, 0, 1],
+                ],
+                dtype=bool,
+            ),
+        )
+
     def test_var_types(self):
         # All variants in our test data should be SNPs (this is not a very good test)
         all_muts = variants_of_types(self.grg, set([VariantType.SNPS]))
@@ -94,6 +203,63 @@ class TestSimple(unittest.TestCase):
 
         no_muts = variants_of_types(self.grg, set([VariantType.OTHER]))
         self.assertEqual(len(no_muts), 0)
+
+    def test_site_alleles(self):
+        grg = make_grg_sparse_mat(
+            [10, 10, 10, 10],
+            ["A", "A", "A", "AC"],
+            ["C", "T", "G", "ACG"],
+            numpy.array(
+                [
+                    [1, 0, 1, 0],
+                    [1, 1, 0, 1],
+                    [1, 1, 0, 0],
+                    [1, 0, 1, 0],
+                ]
+            ),
+        )
+        counts = site_alleles(grg, False)
+        numpy.testing.assert_allclose(counts, [6, 6, 6, 6])
+
+    def test_zygosity_miss(self):
+        grg = make_grg_sparse_mat(
+            [10, 11, 12, 13],
+            ["A", "A", "A", "A"],
+            ["C", "C", "C", "C"],
+            numpy.array(
+                [
+                    [1, 0, 1, 0],
+                    [1, 1, 0, 1],
+                    [1, 1, 0, 0],
+                    [0, 1, 1, 0],
+                ]
+            ),
+            miss=numpy.array(
+                [
+                    [0, 0, 0, 0],
+                    [0, 0, 1, 0],
+                    [0, 0, 0, 1],
+                    [0, 0, 0, 1],
+                ]
+            ),
+            ploidy=2,
+        )
+        self.assertTrue(grg.has_missing_data)
+        all_coals = sum(
+            map(lambda n: grg.get_num_individual_coals(n), range(grg.num_nodes))
+        )
+        self.assertEqual(all_coals, 3)
+
+        zygosities = get_zygosities(grg)
+        expected = numpy.array(
+            [
+                [1, 1, 0, 0],  # Homozygous count by ALT
+                [1, 1, 2, 1],  # Heterozygous count by ALT
+                [0, 0, 0, 1],  # Homozygous count by missing allele
+                [0, 0, 1, 0],  # Heterozygous count by missing allele
+            ]
+        )
+        numpy.testing.assert_equal(zygosities, expected)
 
     @classmethod
     def tearDownClass(cls):

@@ -1,4 +1,5 @@
 import argparse
+import itertools
 import numpy
 import pandas
 import sys
@@ -6,9 +7,10 @@ from collections import defaultdict
 from grapp.util.simple import (
     allele_counts,
     allele_frequencies,
+    hwe_df,
+    multi_allelic_muts,
 )
 from grapp.cli.util import load_immutable
-from grapp.util.simple import hwe_df
 
 
 def add_options(subparser: argparse.ArgumentParser):
@@ -56,6 +58,16 @@ def add_options(subparser: argparse.ArgumentParser):
         "--HWE",
         action="store_true",
         help="Show the tab-separated hardy-weinberg p-value information.",
+    )
+    whattoshow.add_argument(
+        "--multi-sites",
+        action="store_true",
+        help="Show the multi-allelic sites.",
+    )
+    subparser.add_argument(
+        "--multi-ref",
+        action="store_true",
+        help="Compute REF values for multi-allelic sites for anything needing zygosities (HWE, etc.).",
     )
 
 
@@ -108,5 +120,21 @@ def run(args):
         )
         df.to_csv(sys.stdout, sep="\t", index=False)
     if args.HWE:
-        df = hwe_df(grg, jobs=args.jobs, show_progress=True)
+        df = hwe_df(grg, jobs=args.jobs, show_progress=True, all_multi=args.multi_ref)
+        df.to_csv(sys.stdout, sep="\t", index=False)
+    if args.multi_sites:
+        multi = multi_allelic_muts(grg)
+        muts = list(
+            map(
+                lambda m: grg.get_mutation_by_id(m),
+                itertools.chain.from_iterable(multi),
+            )
+        )
+        df = pandas.DataFrame(
+            {
+                "Position": numpy.array(list(map(lambda m: m.position, muts))),
+                "REF": numpy.array(list(map(lambda m: m.ref_allele, muts))),
+                "ALT": numpy.array(list(map(lambda m: m.allele, muts))),
+            }
+        )
         df.to_csv(sys.stdout, sep="\t", index=False)

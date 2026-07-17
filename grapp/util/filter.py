@@ -202,7 +202,7 @@ def grg_save_freq(
 def grg_save_mut_filter(
     grg_or_filename: Union[pygrgl.GRG, str],
     out_filename: str,
-    mut_filter: Callable[[pygrgl.GRG, int], bool],
+    mut_filter: Callable[[pygrgl.GRG, int], Union[bool, str]],
     bp_range: Tuple[int, int] = (0, 0),
     apply_to_sites: bool = False,
     min_variants: int = 0,
@@ -251,10 +251,15 @@ def grg_save_mut_filter(
         if len(muts) < min_variants or len(muts) > max_variants:
             continue
         keep_muts = []
+        require_entire_site = apply_to_sites
         for m in muts:
-            if mut_filter(grg, m):
+            filt_result = mut_filter(grg, m)
+            if not isinstance(filt_result, str) and filt_result:
                 keep_muts.append(m)
-        if apply_to_sites:
+            # Special return value that means drop the given Mutation AND the whole site.
+            if filt_result == "drop_site":
+                require_entire_site = True
+        if require_entire_site:
             if len(keep_muts) == len(muts):
                 seeds.extend(keep_muts)
         else:

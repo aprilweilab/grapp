@@ -234,3 +234,55 @@ def grapp_run(*command) -> str:
     return subprocess.check_output(
         ["python", MAIN_PY] + list(command), stderr=subprocess.STDOUT
     ).decode("utf-8")
+
+
+def make_grg_sparse_mat(
+    positions: List[int],
+    ref_alleles: List[str],
+    alt_alleles: List[str],
+    matrix: numpy.typing.NDArray,
+    miss: Optional[numpy.typing.NDArray] = None,
+    ploidy: int = 1,
+) -> pygrgl.GRG:
+    """
+    Create a GRG that is equivalent to the sparse matrix representations of the given genotype
+    matrix. I.e., this is not a GRG that compresses the data, but just a naive graph representation
+    of the mapping between mutations and samples.
+    """
+    N = matrix.shape[0]
+    M = len(positions)
+    assert M == len(ref_alleles)
+    assert M == len(alt_alleles)
+    assert matrix.shape[1] == M
+    g = pygrgl.MutableGRG(N, ploidy)
+
+    def add_samples(sample_vector):
+        # Create the mutation node
+        node = g.make_node()
+        for j in numpy.flatnonzero(sample_vector):
+            g.connect(node, j)
+        if ploidy == 2:
+            dosage = sample_vector[0::ploidy] + sample_vector[1::ploidy]
+            coals = numpy.count_nonzero(dosage == ploidy)
+            g.set_num_individual_coals(node, coals)
+        return node
+
+    pos2miss = {}
+    for i in range(M):
+        sample_vector = matrix[:, i]
+        mut_node = add_samples(sample_vector)
+        pos = positions[i]
+        miss_node = pygrgl.INVALID_NODE
+        if pos in pos2miss:
+            miss_node = pos2miss[pos]
+        elif miss is not None:
+            miss_vector = miss[:, i]
+            if numpy.sum(miss_vector) > 0:
+                miss_node = add_samples(miss_vector)
+        pos2miss[pos] = miss_node
+        g.add_mutation(
+            pygrgl.Mutation(positions[i], alt_alleles[i], ref_alleles[i]),
+            mut_node,
+            miss_node,
+        )
+    return g
