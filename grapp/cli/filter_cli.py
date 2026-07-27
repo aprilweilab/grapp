@@ -128,7 +128,9 @@ def add_options(subparser: argparse.ArgumentParser):
         "-v",
         "--types",
         type=variant_type_set,
-        help="Comma-separated list of variant types to select. Site is selected if any of the ALT alleles is of the type requested. Types are determined by comparing the REF and ALT alleles.",
+        help="Comma-separated list of variant types to select. Site is selected if any of the ALT alleles is of"
+        " the type requested. Types are determined by comparing the REF and ALT alleles. Types:"
+        f" {', '.join(map(lambda v: v.value, VariantType))}",
     )
     mutation_group.add_argument(
         "-A",
