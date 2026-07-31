@@ -4,15 +4,13 @@ grapp Documentation
 
 .. toctree::
    :maxdepth: 2
-   :caption: Contents:
 
-   API Reference <grapp>
-   Tool File Formats <formats>
-   Compatible Math Libraries <compatible>
-   Filtering <filtering>
+   overview/index
+   howto/index
+   reference/index
 
 grapp is a Python library for performing highly scalable, highly efficient calculations on
-(GRG) files. `GRG is a graph-based data structure and file format format <https://grgl.readthedocs.io/en/stable/concepts.html>`_.
+(GRG) files. `GRG is a graph-based data structure and file format format <https://grgl.readthedocs.io/en/latest/concepts.html>`_.
 GRG can perform complex data calculations orders of magnitude faster than other methods.
 
 grapp is both a tool set and a framework:
@@ -22,8 +20,8 @@ grapp is both a tool set and a framework:
 
 Both integrate nicely with the Python data analysis ecosystem of `numpy <https://numpy.org>`_, `pandas <https://pandas.pydata.org>`_, and `scipy <https://scipy.org>`_.
 
-The main GRG documentation contains some `tutorials <https://grgl.readthedocs.io/en/stable/tutorials/GWAS.html>`_ on using ``grapp`` for tasks like
-`GWAS <https://grgl.readthedocs.io/en/stable/tutorials/GWAS.html>`_, `PCA <https://grgl.readthedocs.io/en/stable/tutorials/PCA.html>`_, and `LinearOperators <https://grgl.readthedocs.io/en/stable/tutorials/LinearOperators.html>`_, among other tasks.
+The main GRG documentation contains some `tutorials <https://grgl.readthedocs.io/en/latest/tutorials/>`_ on using ``grapp`` for tasks like
+`GWAS <https://grgl.readthedocs.io/en/latest/tutorials/GWAS.html>`_, `PCA <https://grgl.readthedocs.io/en/latest/tutorials/PCA.html>`_, and `LinearOperators <https://grgl.readthedocs.io/en/latest/tutorials/LinearOperators.html>`_, among other tasks.
 
 
 Indices and tables
