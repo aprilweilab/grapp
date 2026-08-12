@@ -74,6 +74,7 @@ def add_options(subparser: argparse.ArgumentParser):
 def run(args):
     grg = load_immutable(args.grg_input, load_up_edges=False)
     if args.info:
+        print(f"Ranges: mutations={grg.bp_range}, specified={grg.specified_bp_range}")
         print(f"Mutations: {grg.num_mutations}")
         print(f"Samples: {grg.num_samples}")
         print(f"Individuals: {grg.num_individuals}")
