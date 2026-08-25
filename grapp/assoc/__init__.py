@@ -325,8 +325,9 @@ def linear_assoc_no_covar(
     s_tot = yy - (total_pheno**2) / n
     r2 = 1 - sse / s_tot
 
-    cdf_vals = t_distribution.cdf(t_stat, df=n - 2)
-    p_val = 2 * numpy.where(t_stat > 0, 1 - cdf_vals, cdf_vals)
+    # The CDF is symmetric around 0, so for numerical reasons we always choose the smaller
+    # probability (tail) and do cdf(-|t|) instead of (1 - cdf(|t|)).
+    p_val = 2 * t_distribution.cdf(-numpy.abs(t_stat), df=n - 2)
 
     return common_mut_dataframe(
         grg, COUNT=acount, BETA=beta, B0=b0, SE=se, R2=r2, T=t_stat, P=p_val
@@ -475,8 +476,9 @@ def linear_assoc_covar(
     se = numpy.sqrt(numpy.abs(_div_or_default(SSE, (df * xadjTxadj), math.nan)))
     t_vals = beta / se
 
-    cdf_vals = t_distribution.cdf(t_vals, df)
-    p = 2 * numpy.where(t_vals > 0, 1 - cdf_vals, cdf_vals)
+    # The CDF is symmetric around 0, so for numerical reasons we always choose the smaller
+    # probability (tail) and do cdf(-|t|) instead of (1 - cdf(|t|)).
+    p = 2 * t_distribution.cdf(-numpy.abs(t_vals), df=df)
 
     # Optional GAMMA calculation
     gamma_cols = {}
