@@ -372,6 +372,7 @@ def linear_assoc_covar(
         GAMMA columns.
     :rtype: pandas.DataFrame
     """
+    # TODO: generalize this. We just require the use of binomial variance when doing non-diploid
     PLOIDY = 2
     assert grg.ploidy == PLOIDY, "GWAS is only supported on diploid individuals"
     assert method in ("QR", "regress"), 'Invalid "method" parameter'
@@ -459,10 +460,11 @@ def linear_assoc_covar(
     xadjTxadj = XX - diagonal
 
     # Compute (Xadj^TYadj)
-    xadjTyadj = Yadj @ X_op
+    xadjTyadj = numpy.where(acount < (PLOIDY * n_j), Yadj @ X_op, math.nan)
 
     beta = numpy.zeros(XX.size)
     beta = _div_or_default(xadjTyadj, xadjTxadj, math.nan)
+
     if only_beta:
         return pandas.DataFrame({"BETA": beta})
 

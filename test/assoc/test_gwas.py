@@ -82,11 +82,8 @@ class TestGWAS(unittest.TestCase):
         # Compare against the baseline of known values. This is just a test to make sure
         # nothing changes, as the baselined results have been verified for correctness.
         for column in ["POS", "COUNT", "BETA", "SE", "T", "P"]:
-            selected = (df_nonstd["COUNT"] > 1) & (
-                df_nonstd["COUNT"] < (self.grg.num_samples - 1)
-            )  # Ignore singletons
-            calc_column = df_nonstd[selected][column].to_numpy()
-            base_column = self.covar_baseline[selected][column].to_numpy()
+            calc_column = df_nonstd[column].to_numpy()
+            base_column = self.covar_baseline[column].to_numpy()
             numpy.testing.assert_allclose(
                 calc_column,
                 base_column,
@@ -228,11 +225,8 @@ class TestGWAS(unittest.TestCase):
         ## Compare against the baseline of known values. This is just a test to make sure
         ## nothing changes, as the baselined results have been verified for correctness.
         for column in ["POS", "COUNT", "BETA", "SE", "T", "P"]:
-            selected = (df_covar["COUNT"] > 1) & (
-                df_covar["COUNT"] < (self.grg.num_samples - 1)
-            )  # Ignore singletons
-            calc_column = df_covar[selected][column]
-            base_column = covar_baseline[selected][column]
+            calc_column = df_covar[column]
+            base_column = covar_baseline[column]
             numpy.testing.assert_allclose(
                 calc_column,
                 base_column,
@@ -265,8 +259,6 @@ class TestGWAS(unittest.TestCase):
         rc_C = pd.read_csv(
             os.path.join(INPUT_DIR, "randcovar.covars.txt"), delimiter="\t"
         )
-        print(rc_Y.shape)
-        print(rc_C.shape)
         self._run_and_verify_covar_baseline(
             rc_Y, rc_C, "randcovar.covars.baseline.tsv", wrap_grg
         )
