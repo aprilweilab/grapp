@@ -6,12 +6,19 @@ from grapp.popgen.polarize import (
 from typing import Tuple, Any
 import argparse
 import os
-import pyfaidx
 import pygrgl
 import sys
 
+try:
+    import pyfaidx
+except ImportError:
+    pyfaidx = None
+
 
 def load_fasta(path: str) -> Tuple[Any, str]:
+    assert (
+        pyfaidx is not None
+    ), "Requires 'pyfaidx' module: 'pip install pyfaidx' or 'pip install grapp[popgen]'"
     fasta = pyfaidx.Fasta(path, as_raw=False, sequence_always_upper=True)
     contigs = list(fasta.keys())
     if len(contigs) != 1:
