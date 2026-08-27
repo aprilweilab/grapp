@@ -2,7 +2,7 @@ import os
 import sys
 import unittest
 import numpy
-import pygrgl
+import pytest
 from grapp.popgen import (
     sfs,
     sfs_scaled,
@@ -21,6 +21,9 @@ from testing_utils import make_grg_sparse_mat
 INPUT_DIR = os.path.join(THIS_DIR, "..", "input")
 
 
+@pytest.mark.skipif(
+    sys.version_info < (3, 10), reason="scikit-allel requires python3.10 or higher"
+)
 class TestSFS(unittest.TestCase):
     def setUp(cls):
         # 5 samples, 8 variants.
