@@ -1,5 +1,10 @@
 from grapp.linalg.ops_scipy import SciPyStdXOperator, SciPyXOperator
-from grapp.util.simple import allele_counts, _GenotypeDist, common_mut_dataframe
+from grapp.util.simple import (
+    allele_counts,
+    _GenotypeDist,
+    common_mut_dataframe,
+    _div_or_default,
+)
 from grapp.util.exceptions import UserInputError
 from grapp.grg_calculator import (
     GRGCalcInterface as _GRGCalcInterface,
@@ -15,18 +20,6 @@ import pygrgl
 import re
 import sklearn.linear_model
 import sys
-
-
-def _div_or_default(a, b, d):
-    """
-    y = a / b, unless b_i is 0, then y_i will be set to 0.
-
-    :param a: Numerator
-    :param b: Denominator
-    :param d: Default value for when denominator is 0.
-    """
-    result = numpy.full(a.shape, d)
-    return numpy.divide(a, b, out=result, where=(b != 0))
 
 
 def read_plink_covariates(

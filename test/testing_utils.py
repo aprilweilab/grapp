@@ -243,6 +243,7 @@ def make_grg_sparse_mat(
     matrix: numpy.typing.NDArray,
     miss: Optional[numpy.typing.NDArray] = None,
     ploidy: int = 1,
+    pop_sample_matrix: Optional[numpy.typing.NDArray] = None,
 ) -> pygrgl.GRG:
     """
     Create a GRG that is equivalent to the sparse matrix representations of the given genotype
@@ -285,4 +286,13 @@ def make_grg_sparse_mat(
             mut_node,
             miss_node,
         )
+
+    if pop_sample_matrix is not None:
+        pops = [f"pop_{i}" for i in range(pop_sample_matrix.shape[0])]
+        for p in pops:
+            g.add_population(p)
+        for p in range(pop_sample_matrix.shape[0]):
+            samples_for_p = numpy.flatnonzero(pop_sample_matrix[p])
+            for s in samples_for_p:
+                g.set_population_id(s, p)
     return g

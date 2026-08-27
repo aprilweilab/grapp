@@ -18,11 +18,23 @@ grapp is both a tool set and a framework:
 * The *tool set* includes features like filtering (samples and mutations), PCA, GWAS with covariates, phenotype simulation (via `grg_pheno_sim <https://github.com/aprilweilab/grg_pheno_sim>`_), and data export.
 * The *framework* can be used to build tools/methods for statistical and population genetics. The framework contains Python functionality for integrating GRGs with `scipy <https://scipy.org/>`_ and other numerical libraries. In particular, the ``LinearOperator`` functionality can interoperate with many functions in `scipy.sparse.linalg <https://docs.scipy.org/doc/scipy/reference/sparse.linalg.html#module-scipy.sparse.linalg>`_
 
-Both integrate nicely with the Python data analysis ecosystem of `numpy <https://numpy.org>`_, `pandas <https://pandas.pydata.org>`_, and `scipy <https://scipy.org>`_.
+Both integrate nicely with the Python data analysis ecosystem of `numpy <https://numpy.org>`_, `pandas <https://pandas.pydata.org>`_, and `scipy <https://scipy.org>`_. On the popgen side,
+``grapp`` integrates with `scikit-allel <https://scikit-allel.readthedocs.io/en/stable/index.html>`_ (**work in progress**).
 
 The main GRG documentation contains some `tutorials <https://grgl.readthedocs.io/en/latest/tutorials/>`_ on using ``grapp`` for tasks like
 `GWAS <https://grgl.readthedocs.io/en/latest/tutorials/GWAS.html>`_, `PCA <https://grgl.readthedocs.io/en/latest/tutorials/PCA.html>`_, and `LinearOperators <https://grgl.readthedocs.io/en/latest/tutorials/LinearOperators.html>`_, among other tasks.
 
+Basic installation:
+
+::
+
+   pip install grapp
+
+Installation with optional popgen dependencies:
+
+::
+
+   pip install grapp[popgen]
 
 Indices and tables
 ==================

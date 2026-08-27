@@ -106,3 +106,17 @@ See also "Linear Operators for Multiple GRGs", which is how mathematical operati
    :members:
    :undoc-members:
    :show-inheritance:
+
+
+Population Genetics
+-------------------
+
+.. warning::
+   The popgen functionality in ``grapp`` is in active development; bug reports are very welcome, but
+   the functionality is still undergoing validation and there may be breaking changes to API functions.
+
+.. automodule:: grapp.popgen
+   :members:
+   :imported-members:
+   :undoc-members:
+   :show-inheritance:
