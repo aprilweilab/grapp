@@ -58,6 +58,8 @@ class TestSimple(unittest.TestCase):
             ],
             pop_ac,
         )
+        pop_ac_miss = pop_allele_counts(self.grg, impute_missing=True, return_ref=False)
+        numpy.testing.assert_equal(pop_ac_miss, pop_ac)
 
         # return_ref=True adds another dimension, showing the REF count
         pop_ac = pop_allele_counts(self.grg, return_ref=True)
@@ -70,6 +72,8 @@ class TestSimple(unittest.TestCase):
             ],
             pop_ac,
         )
+        pop_ac_miss = pop_allele_counts(self.grg, impute_missing=True, return_ref=True)
+        numpy.testing.assert_equal(pop_ac_miss, pop_ac)
 
     def test_ac(self):
         ac = allele_counts(self.grg, return_ref=False)
@@ -78,6 +82,8 @@ class TestSimple(unittest.TestCase):
             [2, 2, 3, 3, 1, 4],
             ac,
         )
+        ac_miss = allele_counts(self.grg, impute_missing=True, return_ref=False)
+        numpy.testing.assert_equal(ac_miss, ac)
 
         ac = allele_counts(self.grg, return_ref=True)
         self.assertEqual(ac.shape, (6, 2))
@@ -85,6 +91,8 @@ class TestSimple(unittest.TestCase):
             [(2, 2), (2, 2), (1, 3), (1, 3), (3, 1), (0, 4)],
             ac,
         )
+        ac_miss = allele_counts(self.grg, impute_missing=True, return_ref=True)
+        numpy.testing.assert_equal(ac_miss, ac)
 
 
 if __name__ == "__main__":

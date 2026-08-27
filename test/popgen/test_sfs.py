@@ -98,6 +98,14 @@ class TestSFS(unittest.TestCase):
             _get_pair(2, 1, jsfs_list),
         )
 
+        # XXX Just sanity checks for now - TODO: improve testing
+        jlist = joint_sfs_scaled(self.grg)
+        self.assertEqual(len(jlist), len(jsfs_list))
+        jlist = joint_sfs_folded(self.grg)
+        self.assertEqual(len(jlist), len(jsfs_list))
+        jlist = joint_sfs_folded_scaled(self.grg)
+        self.assertEqual(len(jlist), len(jsfs_list))
+
 
 if __name__ == "__main__":
     unittest.main()
