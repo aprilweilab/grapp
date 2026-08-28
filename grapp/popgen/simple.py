@@ -54,6 +54,13 @@ def sample_pop_matrix(grg: pygrgl.GRG) -> numpy.typing.NDArray:
     return sample_pop
 
 
+def _check_biallelic(grg: pygrgl.GRG):
+    ma = multi_allelic_muts(grg)
+    assert (
+        len(ma) == 0
+    ), f"GRG must have only bi-allelic sites (found {len(ma)} multi-allelic); try the 'grapp filter' command."
+
+
 def pop_allele_counts(
     grg: pygrgl.GRG,
     impute_missing: bool = False,
@@ -83,13 +90,10 @@ def pop_allele_counts(
         of populations and :math:`M` is number of mutations in the GRG.
     :rtype: numpy.ndarray
     """
-    ma = multi_allelic_muts(grg)
-    assert (
-        len(ma) == 0
-    ), f"GRG must have only bi-allelic sites (found {len(ma)} multi-allelic); try the 'grapp filter' command."
+    _check_biallelic(grg)
 
     input_mat = sample_pop_matrix(grg)
-    pop_samples = numpy.sum(input_mat, axis=1)
+    pop_samples = numpy.array([numpy.sum(input_mat, axis=1)]).T
     if impute_missing:
         miss_counts = numpy.zeros(
             (input_mat.shape[0], grg.num_mutations), dtype=numpy.uint32
@@ -102,11 +106,11 @@ def pop_allele_counts(
     if miss_counts is not None:
         assert miss_counts is not None
         acounts += numpy.round(
-            miss_counts * _div_or_default(acounts, pop_samples, 0)
+            miss_counts * _div_or_default(acounts, pop_samples, 0.0)
         ).astype(numpy.uint32)
     if return_ref:
         # P x M x 2 matrix
-        return numpy.array([(numpy.array([pop_samples]).T - acounts).T, acounts.T]).T
+        return numpy.array([(pop_samples - acounts).T, acounts.T]).T
     # P x M matrix
     return acounts
 
@@ -138,10 +142,7 @@ def allele_counts(
         in the GRG.
     :rtype: numpy.ndarray
     """
-    ma = multi_allelic_muts(grg)
-    assert (
-        len(ma) == 0
-    ), f"GRG must have only bi-allelic sites (found {len(ma)} multi-allelic); try the 'grapp filter' command."
+    _check_biallelic(grg)
 
     input_mat = numpy.ones((1, grg.num_samples), dtype=numpy.uint32)
     if impute_missing:
@@ -156,7 +157,7 @@ def allele_counts(
         assert miss_counts is not None
         n_j -= miss_counts[0]
         acounts += numpy.round(
-            miss_counts[0] * _div_or_default(acounts, n_j, 0)
+            miss_counts[0] * _div_or_default(acounts, n_j, 0.0)
         ).astype(numpy.uint32)
     if return_ref:
         # M x 2 matrix

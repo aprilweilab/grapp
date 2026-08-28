@@ -120,4 +120,4 @@ def joint_sfs_folded_scaled(
         matrix as emitted by ``allel.joint_sfs_folded``.
     :rtype: List[Tuple[int, int, numpy.typing.NDArray]]:
     """
-    return _joint_apply(grg, True, allel.join_sfs_folded_scaled)
+    return _joint_apply(grg, True, allel.joint_sfs_folded_scaled)
