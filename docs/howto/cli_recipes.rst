@@ -119,3 +119,12 @@ GRG to IGD
 
     # This can be slow! Use more threads (-j) if possible
     grapp export -j 4 my_input.grg --igd exported.igd
+
+
+tskit TreeSequence to IGD
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. code:: bash
+
+    # This can be slow! Use more threads (-j) if possible
+    grapp ts2igd -j 4 my_input.trees exported.igd

@@ -6,6 +6,7 @@ from grapp.cli import pca_cli
 from grapp.cli import show_cli
 from grapp.cli import pheno_cli
 from grapp.cli import polar_cli
+from grapp.cli import ts2igd_cli
 from grapp.util.exceptions import UserInputError
 
 import argparse
@@ -19,6 +20,7 @@ CMD_FILTER = "filter"
 CMD_SHOW = "show"
 CMD_PHENO = "pheno"
 CMD_POLARIZE = "polarize"
+CMD_TS2IGD = "ts2igd"
 
 
 def main():
@@ -63,7 +65,12 @@ def main():
         CMD_POLARIZE,
         help="Polarize a GRG using an ancestral sequence.",
     )
-    polar_cli.add_options(polar_parser)
+    ts2igd_cli.add_options(polar_parser)
+    ts2igd_parser = subparsers.add_parser(
+        CMD_TS2IGD,
+        help="Convert tskit TreeSequence to IGD.",
+    )
+    ts2igd_cli.add_options(ts2igd_parser)
 
     try:
         args = parser.parse_args()
@@ -87,6 +94,8 @@ def main():
             pheno_cli.run(args)
         elif args.command == CMD_POLARIZE:
             polar_cli.run(args)
+        elif args.command == CMD_TS2IGD:
+            ts2igd_cli.run(args)
         else:
             print(f"Invalid command {args.command}", file=sys.stderr)
             parser.print_help()
