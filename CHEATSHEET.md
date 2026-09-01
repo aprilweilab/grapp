@@ -100,6 +100,13 @@ grapp show -S input.grg > individuals.txt
 grapp export --igd output.igd -j 6 input.grg
 ```
 
+#### Export tskit TreeSequence to IGD format (tabular)
+
+```
+# The more threads (-j) the better!
+grapp ts2igd -j 6 input.trees output.igd
+```
+
 ### GWAS, PCA, and phenotypes
 
 #### Phenotype simulation

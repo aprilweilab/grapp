@@ -11,6 +11,7 @@ import numpy
 import os
 import pygrgl
 import pyigd
+import shutil
 import sys
 import tempfile
 
@@ -152,7 +153,11 @@ def export_igd(
         filename_list: List[str],
         context: Dict[str, Any],
     ):
+        assert len(filename_list) > 0, "No IGDs to be merged"
         if no_merge:
+            return
+        if len(filename_list) == 1:
+            shutil.copy(filename_list[0], out_filename)
             return
         in_files = [open(fn, "rb") for fn in filename_list]
         try:
