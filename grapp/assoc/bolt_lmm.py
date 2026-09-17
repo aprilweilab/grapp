@@ -140,10 +140,6 @@ def bolt_lmm_inf(
     sample_filter = None
     y_miss = np.isnan(_y_arr)
     if y_miss.any():
-        if covariates.covar_cols or covariates.q_covar_cols or covariates.cindep != 1:
-            raise NotImplementedError(
-                "missing phenotypes are only supported for the intercept-only model"
-            )
         nm = np.flatnonzero(~y_miss)
         logger.info(
             "Dropping %d/%d individuals with missing phenotype; Nused=%d",
@@ -152,7 +148,24 @@ def bolt_lmm_inf(
             nm.size,
         )
         _y_arr = _y_arr[nm]
-        covariates = CovariateBasis.intercept_only(nm.size)
+        # Restrict the covariate basis to the retained individuals. For the
+        # intercept-only model this is just a smaller all-ones basis; with real
+        # covariates we re-orthonormalize basis[nm, :] via from_matrix (its SVD
+        # preserves the covariate column span and drops any column that becomes
+        # constant/collinear on the subset), matching C++ BOLT's approach.
+        if (
+            covariates.cindep == 1
+            and not covariates.covar_cols
+            and not covariates.q_covar_cols
+        ):
+            covariates = CovariateBasis.intercept_only(nm.size)
+        else:
+            covariates = CovariateBasis.from_matrix(
+                covariates.basis[nm, :],
+                covar_cols=covariates.covar_cols,
+                q_covar_cols=covariates.q_covar_cols,
+                covar_max_levels=covariates.covar_max_levels,
+            )
         sample_filter = nm.tolist()
 
     y = _y_arr

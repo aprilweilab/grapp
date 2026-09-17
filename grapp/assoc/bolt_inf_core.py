@@ -1179,6 +1179,10 @@ def select_bolt_calibration_snps(
             pos = ops._local_idx_to_pos[chrom][int(arr.local_idx[j])]
             grammar_score = float(grammar_scores_by_chrom[chrom][pos])
             x_norm2 = float(arr.x_norm2[j])
+            if x_norm2 <= 0.0:
+                # Mirrors BoltVariantStats.is_model_variant, whose other
+                # conditions imply x_norm2 > 0.
+                continue
             retro_stat = (grammar_score**2) / all_hinv_norm2 / x_norm2 * float(ops.dim)
             if retro_stat < 5.0:
                 # Build the per-variant object only for the selected SNP.
