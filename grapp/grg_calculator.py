@@ -515,6 +515,8 @@ class GRGSpMVCalculator(GRGCalcInterface):
                     init=mm_init,
                     miss=mm_miss,
                 )
+                if miss is not None and mm_miss is not miss:
+                    miss[...] = cupy.asnumpy(mm_miss).astype(miss.dtype, copy=False)
                 cupy.cuda.Device().synchronize()
                 result = cupy.asnumpy(result)
         else:
