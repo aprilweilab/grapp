@@ -212,6 +212,118 @@ def accuracy_benchmark(args):
         )
 
 
+def trace_benchmark(args):
+    """
+    Compare the trace estimators, which is where the runtime goes.
+
+    Two views: the sampling spread of each estimator on a matrix whose trace
+    we know exactly, and the effect of each on a whole AI-REML fit.  Both are
+    reported at equal *matrix-vector* budget, because every product against
+    ``P V_i`` is a conjugate-gradient solve -- XTrace spends two products per
+    test vector while Hutchinson and Hutch++ spend one, so equal
+    ``num_vectors`` would not be a fair comparison.
+    """
+    from aireml.trace import estimate_trace
+    from aireml.operators import materialize
+    from scipy.sparse.linalg import aslinearoperator
+
+    budget = args.trace_budget
+    print(f"\n=== trace estimator spread (equal budget of {budget} products) ===")
+    rng = numpy.random.default_rng(args.seed)
+    size = 400
+    basis, _ = numpy.linalg.qr(rng.standard_normal((size, size)))
+    matrix = basis @ numpy.diag(numpy.arange(1, size + 1) ** -1.5) @ basis.T
+    operator = aslinearoperator(matrix)
+    exact = numpy.trace(matrix)
+    print(f"exact trace = {exact:.6f}")
+    print(
+        f"{'method':12s} {'num_vectors':>11} {'products':>9} {'mean':>10} "
+        f"{'bias':>11} {'std':>10} {'rel.std':>8}"
+    )
+    baseline = None
+    for method, num_vectors in (
+        ("hutchinson", budget),
+        ("hutchpp", budget),
+        ("xtrace", budget // 2),
+    ):
+        values = numpy.array(
+            [
+                estimate_trace(
+                    operator, num_vectors, method, numpy.random.default_rng(seed)
+                ).value
+                for seed in range(args.trace_repeats)
+            ]
+        )
+        products = estimate_trace(
+            operator, num_vectors, method, numpy.random.default_rng(0)
+        ).num_matvecs
+        spread = values.std(ddof=1)
+        baseline = spread if baseline is None else baseline
+        print(
+            f"{method:12s} {num_vectors:>11} {products:>9} {values.mean():>10.6f} "
+            f"{values.mean() - exact:>+11.2e} {spread:>10.3e} "
+            f"{spread / baseline:>8.3f}"
+        )
+
+    print(f"\n=== effect on a whole AI-REML fit (N = {args.trace_fit_size}) ===")
+    rng = numpy.random.default_rng(args.seed)
+    relatedness, phenotype, _ = simulate(
+        args.trace_fit_size,
+        args.variants,
+        args.tau2,
+        args.sigma2,
+        args.density,
+        args.groups,
+        rng,
+    )
+    reference = fit_reml(
+        phenotype,
+        materialize(relatedness),
+        solver="dense",
+        trace_method="exact",
+        tolerance=1e-8,
+        extra_iterations=0,
+        seed=args.seed,
+    )
+    print(
+        f"exact dense REML optimum: tau2={reference.variance_components[0]:.6f} "
+        f"sigma2={reference.variance_components[1]:.6f} "
+        f"h2={reference.heritability:.6f}"
+    )
+    print(
+        f"{'method':12s} {'num_vectors':>11} {'iters':>6} {'solves':>8} "
+        f"{'matvecs':>9} {'seconds':>8} {'h2':>8} {'|dh2|':>8}"
+    )
+    for method, num_vectors in (
+        ("xtrace", budget // 2),
+        ("hutchpp", budget),
+        ("hutchinson", budget),
+    ):
+        iterations, matvecs, solves, seconds, estimates = [], [], [], [], []
+        for replicate in range(args.trace_fit_repeats):
+            started = time.perf_counter()
+            fitted = fit_reml(
+                phenotype,
+                relatedness,
+                trace_method=method,
+                num_trace_vectors=num_vectors,
+                preconditioner_rank=args.preconditioner_rank,
+                cg_tol=args.cg_tol,
+                seed=replicate,
+            )
+            seconds.append(time.perf_counter() - started)
+            iterations.append(fitted.num_iterations)
+            matvecs.append(fitted.num_matvecs)
+            solves.append(fitted.num_solves)
+            estimates.append(fitted.heritability)
+        print(
+            f"{method:12s} {num_vectors:>11} {numpy.mean(iterations):>6.1f} "
+            f"{numpy.mean(solves):>8.0f} {numpy.mean(matvecs):>9.0f} "
+            f"{numpy.mean(seconds):>8.1f} {numpy.mean(estimates):>8.4f} "
+            f"{numpy.mean(numpy.abs(numpy.array(estimates) - reference.heritability)):>8.4f}"
+        )
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--sizes", type=int, nargs="+", default=[500, 1000, 2000, 4000])
@@ -226,10 +338,22 @@ def main():
     parser.add_argument("--accuracy-size", type=int, default=400)
     parser.add_argument("--replicates", type=int, default=10)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--trace-budget", type=int, default=60)
+    parser.add_argument("--trace-repeats", type=int, default=200)
+    parser.add_argument("--trace-fit-size", type=int, default=1000)
+    parser.add_argument("--trace-fit-repeats", type=int, default=3)
     parser.add_argument("--skip-runtime", action="store_true")
     parser.add_argument("--skip-accuracy", action="store_true")
+    parser.add_argument(
+        "--trace-compare",
+        action="store_true",
+        help="compare the trace estimators (and skip the other sections)",
+    )
     args = parser.parse_args()
 
+    if args.trace_compare:
+        trace_benchmark(args)
+        return
     if not args.skip_runtime:
         runtime_benchmark(args)
     if not args.skip_accuracy:

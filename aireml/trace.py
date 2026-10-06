@@ -3,15 +3,27 @@ Stochastic estimation of ``trace(A)`` for an implicitly defined operator.
 
 AI-REML needs ``trace(P V_i)`` for each variance component, and those are the
 only quantities in the gradient that cannot be reduced to a handful of
-matrix-vector products (Lee et al. 2026, equation 16).  Two unbiased
+matrix-vector products (Lee et al. 2026, equation 16).  Three unbiased
 estimators are provided:
 
 * ``"hutchinson"`` -- the classical estimator (Hutchinson 1990).  Variance
-  decays like ``1/m`` in the number of test vectors ``m``.
+  decays like ``1/m``.
+* ``"hutchpp"`` -- Hutch++ (Meyer et al. 2021), Algorithm 1.  Splits the
+  budget three ways: a sketch that captures the dominant eigenspace, an exact
+  trace on that subspace, and a Hutchinson correction on its orthogonal
+  complement.  Variance decays like ``1/m^2`` for matrices with decaying
+  spectra.
 * ``"xtrace"`` -- the exchangeable estimator of Epperly et al. (2024), which
-  reuses every test vector both for a low-rank sketch and for the residual
-  correction.  Variance decays like ``1/m^2`` for matrices with decaying
-  spectra, at the cost of ``2m`` (rather than ``m``) matrix-vector products.
+  reuses every test vector both for the sketch and for the residual
+  correction via a leave-one-out identity.  Also ``1/m^2``, usually with a
+  smaller constant than Hutch++, but it needs two products per test vector.
+
+**Matrix-vector cost.**  ``num_vectors`` is the *matrix-vector budget* for
+``"hutchinson"`` and ``"hutchpp"`` (the latter matching the ``neval`` argument
+of ``pylops.utils.estimators.trace_hutchpp``), but the *number of test
+vectors* for ``"xtrace"``, which spends ``2 * num_vectors`` products.  Every
+product here is a conjugate-gradient solve, so compare estimators at equal
+``TraceEstimate.num_matvecs``, not at equal ``num_vectors``.
 
 ``"exact"`` materializes the operator and is only useful for testing.
 """
@@ -128,6 +140,50 @@ def _xtrace(
     )
 
 
+def _hutchpp(
+    operator: LinearOperator, num_vectors: int, rng: numpy.random.Generator
+) -> TraceEstimate:
+    """
+    Hutch++ (Meyer et al. 2021), Algorithm 1.
+
+    With a budget of ``k`` products and ``c = k // 3``:
+
+    1. draw sketching matrices ``S`` and ``G``, each ``n x c``;
+    2. ``Q`` = orthonormal basis of ``A S`` (``c`` products);
+    3. return ``trace(Q^T A Q)`` (``c`` products) plus the Hutchinson estimate
+       of ``trace((I - Q Q^T) A (I - Q Q^T))`` using ``G`` (``c`` products).
+
+    The first term is exact on the subspace the sketch found, so all of the
+    remaining variance comes from the complement, where the spectrum has
+    already been deflated.  Unbiased because ``G`` is independent of ``S`` and
+    hence of ``Q``.
+    """
+    size = operator.shape[0]
+    count = num_vectors // 3
+    sketch_vectors = rademacher(size, count, rng)
+    probe_vectors = rademacher(size, count, rng)
+
+    sketch = numpy.asarray(operator.matmat(sketch_vectors))
+    basis, _ = numpy.linalg.qr(sketch)
+    projected = numpy.asarray(operator.matmat(basis))
+    low_rank = float(numpy.trace(basis.T @ projected))
+
+    # (I - Q Q^T) G, then one product each: g^T (I-P) A (I-P) g = w^T A w.
+    deflated = probe_vectors - basis @ (basis.T @ probe_vectors)
+    images = numpy.asarray(operator.matmat(deflated))
+    samples = numpy.einsum("ij,ij->j", deflated, images)
+
+    return TraceEstimate(
+        value=low_rank + float(samples.mean()),
+        stderr=(
+            float(samples.std(ddof=1) / numpy.sqrt(count))
+            if count > 1
+            else float("nan")
+        ),
+        num_matvecs=3 * count,
+    )
+
+
 def _exact(operator: LinearOperator) -> TraceEstimate:
     size = operator.shape[0]
     dense = numpy.asarray(operator.matmat(numpy.eye(size)))
@@ -145,8 +201,11 @@ def estimate_trace(
 
     :param operator: Square :class:`LinearOperator`.  It need not be
         symmetric: AI-REML needs ``trace(P V_i)``, which is not.
-    :param num_vectors: Number of random test vectors.
-    :param method: ``"xtrace"``, ``"hutchinson"``, or ``"exact"``.
+    :param num_vectors: Matrix-vector budget for ``"hutchinson"`` and
+        ``"hutchpp"``; number of test vectors (costing two products each) for
+        ``"xtrace"``.  See the module docstring.
+    :param method: ``"xtrace"``, ``"hutchpp"``, ``"hutchinson"``, or
+        ``"exact"``.
     :param rng: Random generator; a fresh default one is used if omitted.
     """
     operator = aslinearoperator(operator)
@@ -162,6 +221,10 @@ def estimate_trace(
     num_vectors = min(num_vectors, rows)
     if method == "hutchinson":
         return _hutchinson(operator, num_vectors, rng)
+    if method == "hutchpp":
+        if num_vectors < 3:
+            raise ValueError("hutchpp needs num_vectors >= 3")
+        return _hutchpp(operator, num_vectors, rng)
     if method == "xtrace":
         if num_vectors < 2:
             return _hutchinson(operator, num_vectors, rng)

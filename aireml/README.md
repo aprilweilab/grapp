@@ -32,7 +32,7 @@ So `aireml` asks only for the product and supplies the rest:
 | ----------------------- | ---------------------------------------------------------- |
 | `V^-1 b`                | preconditioned conjugate gradients                         |
 | preconditioner          | randomized Nystrom (Frangella et al. 2021), sketched once  |
-| `trace(P V_i)`          | XTrace (Epperly et al. 2024), variance `O(1/m^2)`          |
+| `trace(P V_i)`          | XTrace or Hutch++, variance `O(1/m^2)`                     |
 | starting values         | randomized Haseman-Elston (Wu and Sankararaman 2018)       |
 | curvature               | average information -- exact, no trace estimate needed     |
 
@@ -120,12 +120,82 @@ check the updates against a brute-force maximization of the likelihood.
 | parameter              | default   | note                                                                 |
 | ---------------------- | --------- | -------------------------------------------------------------------- |
 | `num_trace_vectors`    | 50        | dominates cost: `2 x this` solves per component per iteration         |
-| `trace_method`         | `xtrace`  | `hutchinson` is half the cost per vector and much noisier             |
+| `trace_method`         | `xtrace`  | or `hutchpp`; `hutchinson` is much noisier. See below                 |
 | `cg_tol`               | `1e-5`    | relative residual of each solve                                       |
 | `preconditioner_rank`  | 100       | sketched once per component; raise it when a few eigenvalues dominate |
 | `tolerance`            | 0.05      | relative change that counts as converged                              |
 | `extra_iterations`     | 15        | averaging window after convergence                                    |
 | `solver`               | `cg`      | `dense` materializes `V`; exact, only for small `N`                   |
+
+## Trace estimators
+
+`trace(P V_i)` is the only quantity in the gradient that cannot be reduced to
+a few products, and each product against `P` is a CG solve -- so this choice
+drives the runtime. Three unbiased estimators are available, and the fair way
+to compare them is at equal *matrix-vector* count, since XTrace spends two
+products per test vector while the other two spend one:
+
+| estimator | products | relative SD at 60 products | notes |
+| --------- | -------- | -------------------------- | ----- |
+| `hutchinson` | `m` | 1.00 | the classical estimator; variance `O(1/m)` |
+| `hutchpp` | `3 * (m // 3)` | 0.069 | Hutch++ (Meyer et al. 2021), Algorithm 1 |
+| `xtrace` | `2 * m` | 0.053 | Epperly et al. (2024), leave-one-out |
+
+Measured on a 400x400 symmetric matrix with eigenvalues `k^-1.5` over 300
+repeats; reproduce with
+
+```
+python examples/aireml_benchmark.py --trace-compare
+```
+
+Both sketch-and-correct estimators are an order of magnitude better than
+plain Hutchinson, and XTrace has a somewhat smaller constant than Hutch++ for
+the same number of products, which is why it stays the default. The ordering
+is also asserted in `test_variance_ranking_at_equal_matvec_budget`.
+
+One caveat, measured rather than assumed: **this ranking does not carry
+through to a better fit.** At N=1500 over 12 seeds at equal product budget
+(~25,800 products each), all three estimators converge every time and land on
+the same answer:
+
+| estimator | sec | mean h2 | SD h2 | max err |
+| --------- | ---:| -------:| -----:| -------:|
+| `xtrace` | 14.1 | 0.49602 | 0.00176 | 0.00433 |
+| `hutchpp` | 12.9 | 0.49743 | 0.00221 | 0.00380 |
+| `hutchinson` | 12.2 | 0.49640 | 0.00168 | 0.00319 |
+
+(exact REML optimum 0.496796). The spreads are within each other's
+uncertainty, so even plain Hutchinson is not measurably worse *here*. Two
+structural reasons: the average information is computed exactly, so trace
+noise perturbs only the search direction and never the curvature; and the
+default stopping rule returns the mean of the last 15 iterates, which
+averages the remaining noise across iterations.
+
+The wall-clock ordering is the one real difference, and it tracks dense
+overhead rather than solves: XTrace's leave-one-out downdate costs a
+triangular solve and several m-by-m products per estimate, which is why it is
+the slowest of the three despite spending the same number of solves.
+
+Two practical consequences, both bigger than the estimator choice:
+
+* `extra_iterations` dominates the cost/accuracy trade. Dropping it to 0 on
+  the same problem converges in 2 iterations and 1.5s instead of 17 and 13s,
+  at a worst-case error of 0.018 rather than 0.004 -- 8x cheaper for 4x the
+  error. Worth tuning deliberately.
+* `num_trace_vectors` matters more than which estimator spends it.
+
+`xtrace` remains the default: it has the lowest variance per product, it is
+what Lee et al. (2026) use, and a ~9% wall-clock gap on a single benchmark is
+too thin to justify changing it. Switch to `hutchpp` if you want the speed
+back and are satisfied by the table above.
+
+Hutch++ splits its budget three ways -- sketch, exact trace on the sketched
+subspace, Hutchinson correction on the complement -- and is the better choice
+if you want a simpler estimator or care about the dense `O(N m^2)` overhead
+that XTrace's leave-one-out downdate adds on top of the solves. The
+implementation follows the same Algorithm 1 as
+`pylops.utils.estimators.trace_hutchpp`, and is cross-checked against it in
+the test suite (pylops is not a dependency; the check skips if it is absent).
 
 ## Cost
 
@@ -162,6 +232,8 @@ against Haseman-Elston.
   with ARG-powered linear algebra. *GENETICS* 233(1):iyag074.
 * Epperly E, Tropp JA, Webber RJ (2024). XTrace: making the most of every
   sample in stochastic trace estimation. *SIMAX* 45(1):1-23.
+* Meyer RA, Musco C, Musco C, Woodruff DP (2021). Hutch++: optimal stochastic
+  trace estimation. *SOSA* 2021:142-155.
 * Frangella Z, Tropp JA, Udell M (2021). Randomized Nystrom preconditioning.
   *SIMAX* 44(2):718-752.
 * Wu Y, Sankararaman S (2018). A scalable estimator of SNP heritability for

@@ -116,7 +116,7 @@ def haseman_elston(
         estimates = numpy.linalg.solve(gram, moments)
     except numpy.linalg.LinAlgError:  # pragma: no cover - singular moment system
         estimates = numpy.linalg.lstsq(gram, moments, rcond=None)[0]
-    total = max(float(numpy.var(residual_y)), numpy.finfo(float).tiny)
+    total = max(float(numpy.var(residual_y)), float(numpy.finfo(float).tiny))
     floor = 1e-4 * total
     if not numpy.all(numpy.isfinite(estimates)):
         return numpy.full(num_components, total / num_components)
@@ -316,8 +316,15 @@ def fit_reml(
     :param extra_iterations: Iterations to run after the convergence criterion
         is first met; the returned estimate is their average, which averages
         out the noise in the stochastic gradient (15 in Lee et al. 2026).
-    :param num_trace_vectors: Random test vectors per trace estimate.
-    :param trace_method: ``"xtrace"``, ``"hutchinson"`` or ``"exact"``.
+    :param num_trace_vectors: Budget for each trace estimate.  This is the
+        matrix-vector budget for ``"hutchinson"`` and ``"hutchpp"``, but the
+        number of test vectors -- two products each -- for ``"xtrace"``, so
+        ``num_trace_vectors=50`` with ``"xtrace"`` costs the same as
+        ``num_trace_vectors=100`` with ``"hutchpp"``.
+    :param trace_method: ``"xtrace"`` (lowest variance per product),
+        ``"hutchpp"`` (Hutch++; slightly higher variance per product, less
+        dense overhead), ``"hutchinson"`` (much noisier), or ``"exact"``
+        (materializes the operator; testing only).
     :param solver: ``"cg"``, ``"dense"``, or a
         :class:`~aireml.solvers.CovarianceSolver` instance.
     :param cg_tol: Relative residual tolerance of the CG solves.
@@ -401,7 +408,7 @@ def fit_reml(
     initial = theta.copy()
 
     if min_variance is None:
-        min_variance = 1e-6 * max(float(numpy.var(y)), numpy.finfo(float).tiny)
+        min_variance = 1e-6 * max(float(numpy.var(y)), float(numpy.finfo(float).tiny))
     theta = numpy.maximum(theta, min_variance)
 
     history: List[numpy.ndarray] = []
