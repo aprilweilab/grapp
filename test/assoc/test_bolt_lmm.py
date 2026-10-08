@@ -57,7 +57,7 @@ class TestBoltLmmInf(unittest.TestCase):
         cls.chrom_grgs = list(zip(CHROMS, cls.grgs))
         cls.n = cls.grgs[0].num_individuals
 
-    def _run_against_truth(self, pheno_file, truth_file, expected_missing):
+    def _run_against_truth(self, pheno_file, truth_file, expected_missing, cov=None):
         # read_pheno maps the NA missing token to NaN; the driver drops those
         # individuals (Nused = n - expected_missing) and rebuilds the intercept basis.
         y = read_pheno(os.path.join(INPUT_DIR, pheno_file))
@@ -67,7 +67,8 @@ class TestBoltLmmInf(unittest.TestCase):
             expected_missing,
             f"{pheno_file}: expected {expected_missing} missing, got {int(np.isnan(y).sum())}",
         )
-        cov = CovariateBasis.intercept_only(self.n)
+        if cov is None:
+            cov = CovariateBasis.intercept_only(self.n)
 
         fit, cal, _, stats = bolt_lmm_inf(
             self.chrom_grgs,
@@ -117,6 +118,32 @@ class TestBoltLmmInf(unittest.TestCase):
         self._run_against_truth(
             "bolt.miss.pheno.txt", "bolt.miss.truth.tsv", expected_missing=55
         )
+
+    def test_missing_with_real_covar_runs(self):
+        # End-to-end smoke for the bolt runs with covariate and missingness
+        y = read_pheno(os.path.join(INPUT_DIR, "bolt.miss.pheno.txt"))
+        self.assertEqual(int(np.isnan(y).sum()), 55)
+        rng = np.random.default_rng(SEED)
+        C_full = np.column_stack([np.ones(self.n), rng.standard_normal((self.n, 2))])
+        cov = CovariateBasis.from_matrix(
+            C_full, covar_cols=(), q_covar_cols=("x", "y"), covar_max_levels=10
+        )
+        self.assertEqual(cov.cindep, 3)
+
+        fit, cal, _, stats = bolt_lmm_inf(self.chrom_grgs, y, cov, seed=SEED, threads=1)
+        df = lmm_inf_stats_to_dataframe(stats, self.chrom_grgs)
+
+        self.assertGreater(len(df), 0)
+        beta = df["BETA"].astype(float).to_numpy()
+        chisq = df["CHISQ_BOLT_LMM_INF"].astype(float).to_numpy()
+        self.assertTrue(
+            np.isfinite(beta).all(), "non-finite BETA with covariates+missing"
+        )
+        self.assertTrue(
+            np.isfinite(chisq).all(), "non-finite CHISQ with covariates+missing"
+        )
+        self.assertTrue(0.0 <= fit.h2 <= 1.0, f"h2 out of range: {fit.h2}")
+        self.assertGreater(cal.factor, 0.0, f"calibration not positive: {cal.factor}")
 
 
 if __name__ == "__main__":
