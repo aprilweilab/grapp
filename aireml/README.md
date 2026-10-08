@@ -171,12 +171,30 @@ noise perturbs only the search direction and never the curvature; and the
 default stopping rule returns the mean of the last 15 iterates, which
 averages the remaining noise across iterations.
 
-The wall-clock ordering is the one real difference, and it tracks dense
-overhead rather than solves: XTrace's leave-one-out downdate costs a
-triangular solve and several m-by-m products per estimate, which is why it is
-the slowest of the three despite spending the same number of solves.
+Runtime is where it gets subtle. XTrace does strictly more dense work per
+estimate -- both estimators QR the sketch, but XTrace additionally needs the
+triangular solve for `R^-T`, a column normalization, and several m-by-m
+products to assemble the leave-one-out terms. Timed in isolation against a
+deliberately cheap operator (N=1500, 60 products, 40-60 repeats) that
+overhead is plainly visible, and it shrinks as the product gets costlier:
 
-Two practical consequences, both bigger than the estimator choice:
+| cost of one product | xtrace | hutchpp | gap |
+| ------------------- | -----: | ------: | --: |
+| rank-5 update (trivial) | 16.00 ms | 4.97 ms | +222% |
+| rank-50 | 8.48 ms | 6.22 ms | +36% |
+| rank-200 | 8.95 ms | 9.17 ms | -2% |
+| rank-800 | 16.12 ms | 14.89 ms | +8% |
+
+So the overhead matters only when products are cheap. In a real fit each
+product is a CG solve, and **the end-to-end difference is not reliably
+measurable**: repeated runs put the three estimators within a few percent of
+each other in both directions, and a fit that happens to need one extra
+iteration spends ~6% more products, which is larger than the effect being
+chased. The benchmark reports a `ms/1k mv` column to normalize the iteration
+count away, but even that moves by ~5% between runs at the default three
+repeats. Do not read an ordering out of a single run.
+
+Two practical consequences, both far bigger than the estimator choice:
 
 * `extra_iterations` dominates the cost/accuracy trade. Dropping it to 0 on
   the same problem converges in 2 iterations and 1.5s instead of 17 and 13s,
@@ -184,10 +202,9 @@ Two practical consequences, both bigger than the estimator choice:
   error. Worth tuning deliberately.
 * `num_trace_vectors` matters more than which estimator spends it.
 
-`xtrace` remains the default: it has the lowest variance per product, it is
-what Lee et al. (2026) use, and a ~9% wall-clock gap on a single benchmark is
-too thin to justify changing it. Switch to `hutchpp` if you want the speed
-back and are satisfied by the table above.
+`xtrace` stays the default: lowest variance per product, and the choice in
+Lee et al. (2026). Prefer `hutchpp` when products are cheap enough that the
+dense overhead shows up, or when you want the simpler estimator.
 
 Hutch++ splits its budget three ways -- sketch, exact trace on the sketched
 subspace, Hutchinson correction on the complement -- and is the better choice

@@ -290,9 +290,13 @@ def trace_benchmark(args):
         f"sigma2={reference.variance_components[1]:.6f} "
         f"h2={reference.heritability:.6f}"
     )
+    # Total seconds is a confounded way to compare estimators: a fit that
+    # happens to need one extra iteration spends ~6% more products, which
+    # swamps the per-product difference between the estimators.  The
+    # ms/1k-products column normalizes that away.
     print(
         f"{'method':12s} {'num_vectors':>11} {'iters':>6} {'solves':>8} "
-        f"{'matvecs':>9} {'seconds':>8} {'h2':>8} {'|dh2|':>8}"
+        f"{'matvecs':>9} {'seconds':>8} {'ms/1k mv':>9} {'h2':>8} {'|dh2|':>8}"
     )
     for method, num_vectors in (
         ("xtrace", budget // 2),
@@ -316,10 +320,12 @@ def trace_benchmark(args):
             matvecs.append(fitted.num_matvecs)
             solves.append(fitted.num_solves)
             estimates.append(fitted.heritability)
+        normalized = 1e3 * numpy.mean(seconds) / numpy.mean(matvecs) * 1e3
         print(
             f"{method:12s} {num_vectors:>11} {numpy.mean(iterations):>6.1f} "
             f"{numpy.mean(solves):>8.0f} {numpy.mean(matvecs):>9.0f} "
-            f"{numpy.mean(seconds):>8.1f} {numpy.mean(estimates):>8.4f} "
+            f"{numpy.mean(seconds):>8.1f} {normalized:>9.1f} "
+            f"{numpy.mean(estimates):>8.4f} "
             f"{numpy.mean(numpy.abs(numpy.array(estimates) - reference.heritability)):>8.4f}"
         )
 
