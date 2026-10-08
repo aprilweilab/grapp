@@ -163,3 +163,24 @@ The `nn` module lets you search a dataset stored as a GRG for nearest neighbors 
   be slightly more limited in the latter case.
 
 
+
+## aireml (standalone)
+
+The `aireml/` directory is a self-contained package for average-information REML
+(AI-REML) estimation of variance components, following
+[Lee et al. (2026)](https://doi.org/10.1093/genetics/iyag074). It is deliberately
+independent of GRG: it takes a phenotype vector and one or more
+`scipy.sparse.linalg.LinearOperator`s standing in for the genetic relatedness
+matrix, and never forms an `N x N` matrix. Its only dependencies are `numpy` and
+`scipy`, so the directory can be lifted out and used on its own.
+
+```python
+from aireml import fit_reml, grm_from_genotypes
+
+grm = grm_from_genotypes(genotypes)   # any N x M operator, including a GRG one
+result = fit_reml(phenotypes, grm, covariates=covariates)
+print(result.heritability, result.heritability_stderr)
+```
+
+See [aireml/README.md](https://github.com/aprilweilab/grapp/blob/main/aireml/README.md)
+for the algorithm, tuning knobs, and accuracy/runtime checks.
