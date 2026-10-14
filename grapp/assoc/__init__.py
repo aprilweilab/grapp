@@ -12,6 +12,7 @@ from grapp.grg_calculator import (
 )
 from scipy.stats import t as t_distribution
 from typing import List, Optional, Union, Tuple
+from grapp.assoc.bolt_lmm import bolt_lmm_inf  # noqa: F401
 import itertools
 import math
 import numpy
