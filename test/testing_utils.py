@@ -164,44 +164,35 @@ def complete_sample_sets(grg, ignore_indivs):
     return keep_indivs, ignore_indivs, keep_samples, ignore_samples
 
 
-def _wrap_grg_spmv(grg: Union[pygrgl.GRG, GRGCalcInterface]) -> GRGCalcInterface:
-    _SPMV_ENV = "PYGRGL_SPMV_CONFIG"
-    config_path = os.environ.get(_SPMV_ENV)
-    if config_path is None:
-        print(
-            f"[_wrap_grg_spmv] Environment variable {_SPMV_ENV!r} is NOT set.\n"
-            f"  pygrgl_spmv.load() will attempt to select a default backend "
-            f"(MKL preferred, cuSPARSE fallback) and emit a UserWarning.\n"
-            f"  To silence this warning and control the backend, set {_SPMV_ENV} "
-            f"to the path of a JSON config file."
-        )
-    else:
-        print(
-            f"[_wrap_grg_spmv] Environment variable {_SPMV_ENV!r} is set to: {config_path!r}"
-        )
+def _wrap_grg_spmv(grg, backend, stack, **kwargs):
+    """Convert explicitly, and keep the runtime alive in the test's ExitStack."""
+    import tempfile
+    from pathlib import Path
+    from pygrgl_spmv import testing
 
-    if isinstance(grg, GRGCalcInterface):
-        print(
-            f"[_wrap_grg_spmv] Input is already a GRGCalcInterface ({type(grg).__name__}); returning as-is."
-        )
-        return grg
-
-    if _pygrgl_spmv is None:
-        raise ImportError(
-            "pygrgl_spmv is not installed; cannot use _wrap_grg_spmv. "
-            "Install the grg-spmv package or use _wrap_grg instead."
-        )
-    print(
-        f"[_wrap_grg_spmv] Loading GRG object ({type(grg).__name__}) via pygrgl_spmv.load() ..."
-    )
-    spmv_op = _pygrgl_spmv.load(grg)
-    print(f"[_wrap_grg_spmv] Load complete. Wrapping in GRGSpMVCalculator.")
-    return GRGSpMVCalculator(spmv_op)
+    if not testing.is_available(backend):
+        import unittest
+        raise unittest.SkipTest(f"{backend} unavailable")
+    directory = Path(stack.enter_context(tempfile.TemporaryDirectory()))
+    source = directory / "input.grg"
+    pygrgl.save_grg(grg, str(source))
+    artifact = testing.artifact_for(source, directory)
+    if "req" not in kwargs:
+        kwargs.setdefault("max_k", 64)
+    loaded = stack.enter_context(testing.load(artifact, backend=backend, **kwargs))
+    return GRGSpMVCalculator(loaded)
 
 
-WRAP_GRG_PARAMS = [(lambda g: g,), (GRGCalculator,)]
+def _wrapper(backend):
+    def wrap(grg, stack, **kwargs):
+        return _wrap_grg_spmv(grg, backend, stack, **kwargs)
+    wrap.__name__ = backend
+    return wrap
+
+
+WRAP_GRG_PARAMS = [("grgl", lambda g, stack: g), ("calculator", lambda g, stack: GRGCalculator(g))]
 if _pygrgl_spmv is not None:
-    WRAP_GRG_PARAMS.append((_wrap_grg_spmv,))
+    WRAP_GRG_PARAMS.extend((backend, _wrapper(backend)) for backend in ("reference", "mkl", "cusparse", "rocsparse"))
 
 
 def which(exe: str, required=False) -> Optional[str]:

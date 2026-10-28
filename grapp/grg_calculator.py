@@ -52,20 +52,20 @@ def _scipy_operator_table() -> Dict[tuple, Callable]:
 def _cupy_operator_table() -> Dict[tuple, Callable]:
     assert (
         cupy is not None
-    ), "cupy not installed; try 'pip install cupy' or use a different backend"
+    ), ("CuPy is required for GPU operators; follow "
+       "https://github.com/CornellHPC/GRG-SpMV/tree/rocm-support#install")
     from grapp.linalg import ops_cupy as m
     from cupyx.scipy.sparse.linalg import eigsh
 
     def _eigsh(A, **kwargs):
-        def _convert_if_present(kwargs, key):
-            if key in kwargs:
-                kwargs[key] = cupy.asarray(kwargs[key])
-
-        _convert_if_present(kwargs, "M")
-        _convert_if_present(kwargs, "v0")
-        eigval, eigvect = eigsh(A, **kwargs)
-        cupy.cuda.Device().synchronize()
-        return cupy.asnumpy(eigval), cupy.asnumpy(eigvect)
+        device = cupy.cuda.Device(A._output_device if hasattr(A, "_output_device") else A._device)
+        with device:
+            for key in ("M", "v0"):
+                if kwargs.get(key) is not None:
+                    kwargs[key] = cupy.asarray(kwargs[key])
+            eigval, eigvect = eigsh(A, **kwargs)
+            device.synchronize()
+            return cupy.asnumpy(eigval), cupy.asnumpy(eigvect)
 
     return {
         ("X", False, False): m.CuPyXOperator,
@@ -518,7 +518,8 @@ class GRGSpMVCalculator(GRGCalcInterface):
                 if miss is not None and mm_miss is not miss:
                     miss[...] = cupy.asnumpy(mm_miss).astype(miss.dtype, copy=False)
                 cupy.cuda.Device().synchronize()
-                result = cupy.asnumpy(result)
+                if not isinstance(input, cupy.ndarray):
+                    result = cupy.asnumpy(result)
         else:
             result = self._op.matmul(
                 input,

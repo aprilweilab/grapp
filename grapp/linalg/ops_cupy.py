@@ -1,7 +1,7 @@
 """
 CuPy-native linear operators for Spmv-GRG matrix multiplications.
 
-All operators require a CUDA-capable GRG (grg.device must not be None).
+All operators require a GPU-capable GRG (grg.device must not be None).
 CuPy is a hard dependency; an ImportError at import time indicates it is
 not installed.
 

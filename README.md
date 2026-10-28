@@ -119,3 +119,5 @@ stored as a GRG for nearest neighbors in a variety of ways:
 * There are APIs that let you query using a sample/mutation already in the dataset (GRG) or more generally
   you can query using an external sample/mutation that is not in the dataset, though your options may
   be slightly more limited in the latter case.
+
+For changes to the Mikado integration, follow the shared [contribution guide](https://github.com/CornellHPC/GRG-SpMV/blob/rocm-support/CONTRIBUTING.md).

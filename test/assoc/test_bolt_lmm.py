@@ -1,5 +1,6 @@
 import os
 import unittest
+import pytest
 
 import numpy as np
 import pandas as pd
@@ -45,6 +46,39 @@ REL_TOL = {
 ABS_TOL = 5e-2  # median absolute error, all columns
 
 
+def _assert_bolt_comparison(case, df, truth, fit, cal):
+    merged = df.merge(truth, on=MERGE_KEYS, suffixes=("_got", "_exp"))
+    case.assertEqual(len(df), len(truth), "row count mismatch")
+    case.assertEqual(len(merged), len(truth), "variant-key merge dropped rows")
+
+    for col, rel_tol in REL_TOL.items():
+        got = merged[f"{col}_got"].astype(float).to_numpy()
+        exp = merged[f"{col}_exp"].astype(float).to_numpy()
+        # NaN must appear in exactly the same variants in both.
+        np.testing.assert_array_equal(
+            np.isnan(got), np.isnan(exp), err_msg=f"NaN-position mismatch in {col}"
+        )
+        mask = ~(np.isnan(got) | np.isnan(exp))
+        abs_err = np.abs(got[mask] - exp[mask])
+        rel_err = abs_err / (np.abs(exp[mask]) + 1e-12)
+        # Median (not max/p99): near-zero BETA/CHISQ rows make relative error
+        # meaningless in the tail, so a robust central statistic is used.
+        med_abs = float(np.median(abs_err))
+        med_rel = float(np.median(rel_err))
+        case.assertLess(
+            med_abs, ABS_TOL, f"{col}: median abs err {med_abs:.3e} >= {ABS_TOL}"
+        )
+        case.assertLess(
+            med_rel, rel_tol, f"{col}: median rel err {med_rel:.3e} >= {rel_tol}"
+        )
+
+    # Sanity on the fitted variance-component scalars.
+    case.assertTrue(0.0 <= fit.h2 <= 1.0, f"h2 out of range: {fit.h2}")
+    case.assertGreater(
+        cal.factor, 0.0, f"calibration factor not positive: {cal.factor}"
+    )
+
+@pytest.mark.human_data
 class TestBoltLmmInf(unittest.TestCase):
     """grgl-backend regression tests for BOLT-LMM-inf (with and without missingness)."""
 
@@ -80,36 +114,7 @@ class TestBoltLmmInf(unittest.TestCase):
         df = lmm_inf_stats_to_dataframe(stats, self.chrom_grgs)
 
         truth = pd.read_csv(os.path.join(INPUT_DIR, truth_file), sep="\t")
-        merged = df.merge(truth, on=MERGE_KEYS, suffixes=("_got", "_exp"))
-        self.assertEqual(len(df), len(truth), "row count mismatch")
-        self.assertEqual(len(merged), len(truth), "variant-key merge dropped rows")
-
-        for col, rel_tol in REL_TOL.items():
-            got = merged[f"{col}_got"].astype(float).to_numpy()
-            exp = merged[f"{col}_exp"].astype(float).to_numpy()
-            # NaN must appear in exactly the same variants in both.
-            np.testing.assert_array_equal(
-                np.isnan(got), np.isnan(exp), err_msg=f"NaN-position mismatch in {col}"
-            )
-            mask = ~(np.isnan(got) | np.isnan(exp))
-            abs_err = np.abs(got[mask] - exp[mask])
-            rel_err = abs_err / (np.abs(exp[mask]) + 1e-12)
-            # Median (not max/p99): near-zero BETA/CHISQ rows make relative error
-            # meaningless in the tail, so a robust central statistic is used.
-            med_abs = float(np.median(abs_err))
-            med_rel = float(np.median(rel_err))
-            self.assertLess(
-                med_abs, ABS_TOL, f"{col}: median abs err {med_abs:.3e} >= {ABS_TOL}"
-            )
-            self.assertLess(
-                med_rel, rel_tol, f"{col}: median rel err {med_rel:.3e} >= {rel_tol}"
-            )
-
-        # Sanity on the fitted variance-component scalars.
-        self.assertTrue(0.0 <= fit.h2 <= 1.0, f"h2 out of range: {fit.h2}")
-        self.assertGreater(
-            cal.factor, 0.0, f"calibration factor not positive: {cal.factor}"
-        )
+        _assert_bolt_comparison(self, df, truth, fit, cal)
 
     def test_no_missing(self):
         self._run_against_truth("bolt.pheno.txt", "bolt.truth.tsv", expected_missing=0)
@@ -144,6 +149,85 @@ class TestBoltLmmInf(unittest.TestCase):
         )
         self.assertTrue(0.0 <= fit.h2 <= 1.0, f"h2 out of range: {fit.h2}")
         self.assertGreater(cal.factor, 0.0, f"calibration not positive: {cal.factor}")
+
+
+@pytest.fixture(scope="module")
+def simulated_bolt_inputs(tmp_path_factory):
+    import sys
+    from pathlib import Path
+    import pygrgl
+    from pygrgl_spmv import simple_convert
+    from grapp.util.filter import grg_save_range
+    from grg_pheno_sim.multi_grg_phenotype import sim_phenotypes_multi_grg
+
+    sys.path.append(str(Path(__file__).resolve().parents[1]))
+    from testing_utils import construct_grg
+
+    directory = tmp_path_factory.mktemp("bolt-simulated")
+    source = construct_grg("test-200-samples.vcf.gz", str(directory / "simulated.grg"))
+    raw = pygrgl.load_immutable_grg(source, load_up_edges=True)
+    positions = sorted(raw.get_mutation_by_id(j).position for j in range(raw.num_mutations))
+    edges = [positions[0], positions[len(positions)//3], positions[2*len(positions)//3], positions[-1]+1]
+    assert edges == [55829, 3345382, 6712483, 9999127]
+    paths = []
+    for chrom, lo, hi in zip(CHROMS, edges[:-1], edges[1:]):
+        path = directory / f"chr{chrom}.grg"
+        grg_save_range(raw, str(path), (lo, hi))
+        paths.append(path)
+    raw_parts = [pygrgl.load_immutable_grg(str(path)) for path in paths]
+    assert sum(g.num_mutations for g in raw_parts) == 10893
+    assert all(g.num_individuals == 200 for g in raw_parts)
+    artifacts = [simple_convert(path, path.with_suffix(".grg_spmv")) for path in paths]
+    frame = sim_phenotypes_multi_grg([str(p) for p in paths], load_all_ram=True,
+                                    heritability=.6, standardized=True, random_seed=42)
+    frame.to_csv(directory / "phenotypes.tsv", sep="\t", index=False)
+    return raw_parts, artifacts, frame["phenotype"].to_numpy()
+
+
+@pytest.fixture(scope="module", params=["complete", "missing", "covariates"])
+def simulated_bolt_scenario(request, simulated_bolt_inputs):
+    from grapp.grg_calculator import GRGCalculator
+
+    raw, artifacts, phenotype = simulated_bolt_inputs
+    y = phenotype.copy()
+    if request.param != "complete":
+        y[:30] = np.nan
+    cov = CovariateBasis.intercept_only(len(y))
+    if request.param == "covariates":
+        matrix = np.column_stack((np.ones(len(y)), np.random.default_rng(2026).normal(size=(len(y), 2))))
+        cov = CovariateBasis.from_matrix(matrix, covar_cols=(), q_covar_cols=("x", "y"), covar_max_levels=10)
+    chromosomes = [(c, GRGCalculator(g)) for c, g in zip(CHROMS, raw)]
+    fit, cal, _, stats = bolt_lmm_inf(chromosomes, y, cov, seed=SEED, threads=1)
+    truth = lmm_inf_stats_to_dataframe(stats, chromosomes)
+    assert 0 <= fit.h2 <= 1 and cal.factor > 0
+    return artifacts, y, cov, truth
+
+
+@pytest.mark.parametrize("backend,native,device", [
+    pytest.param("reference", False, 0, marks=pytest.mark.reference),
+    pytest.param("mkl", False, 0, marks=pytest.mark.mkl),
+    *[pytest.param(b, native, 0, marks=getattr(pytest.mark, b))
+      for b in ("cusparse", "rocsparse") for native in (False, True)],
+    pytest.param("cusparse", True, 1, marks=pytest.mark.cusparse, id="cusparse-native-device1"),
+])
+def test_simulated_bolt_matches_grgl(simulated_bolt_scenario, backend, native, device):
+    from grapp.grg_calculator import GRGSpMVCalculator
+    from pygrgl_spmv import testing, make_runconfig_bolt
+
+    if device:
+        import cupy
+        if cupy.cuda.runtime.getDeviceCount() < 2:
+            pytest.skip("needs at least two GPU devices")
+        assert cupy.cuda.runtime.getDevice() == 0
+    artifacts, y, cov, truth = simulated_bolt_scenario
+    kwargs = dict(capture=True, native=native, device=device) if backend in {"cusparse", "rocsparse"} else {}
+    with testing.load_many(artifacts, backend=backend, req=make_runconfig_bolt(), **kwargs) as grgs:
+        chromosomes = [(c, GRGSpMVCalculator(g)) for c, g in zip(CHROMS, grgs)]
+        fit, cal, _, stats = bolt_lmm_inf(chromosomes, y, cov, seed=SEED, threads=1)
+        frame = lmm_inf_stats_to_dataframe(stats, chromosomes)
+        if device:
+            assert cupy.cuda.runtime.getDevice() == 0
+    _assert_bolt_comparison(unittest.TestCase(), frame, truth, fit, cal)
 
 
 if __name__ == "__main__":

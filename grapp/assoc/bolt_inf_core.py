@@ -129,6 +129,9 @@ class VarianceFit:
     h2: float
     delta: float
     all_hinv_y: Any
+    secant_converged: bool = False
+    secant_steps: int = 0
+    cg_stats: Optional[CgStats] = None
 
 
 @dataclass(frozen=True)
@@ -260,6 +263,10 @@ class CovariateBasis:
 # ---------------------------------------------------------------------------
 
 
+class SolverConvergenceError(RuntimeError):
+    """An iterative BOLT solve returned non-finite or unconverged values."""
+
+
 def bolt_conj_grad_solve(
     matvecs: Sequence[Any],
     rhs_columns: Sequence[Any],
@@ -279,9 +286,11 @@ def bolt_conj_grad_solve(
         raise ValueError("matvec and RHS counts differ")
     if not rhs_columns:
         return []
+    if max_iter < 1 or not np.isfinite(rel_tol) or rel_tol <= 0:
+        raise ValueError("CG requires max_iter >= 1 and a finite positive rel_tol")
     xp = _array_module(rhs_columns[0])
     # Mirrors BOLT-LMM_v2.5 Bolt::conjGradSolve: full-batch CG, no active-column
-    # mask, no denominator guard, and no exception when maxIters is reached.
+    # mask or denominator guard. Failed solves raise instead of being accepted.
     b_cols = [project(xp.asarray(rhs, dtype=DTYPE).copy()) for rhs in rhs_columns]
     b = xp.column_stack(b_cols)
     x = xp.zeros_like(b)
@@ -291,6 +300,8 @@ def bolt_conj_grad_solve(
     r2_orig = xp.sum(r * r, axis=0)
     r2_old = r2_orig.copy()
     rels = xp.sqrt(r2_old / r2_orig)
+    if not bool(xp.all(xp.isfinite(rels))):
+        raise SolverConvergenceError("CG initial relative residual is non-finite")
     for it in range(1, int(max_iter) + 1):
         for col, matvec in enumerate(matvecs):
             matvec(p[:, col], hp[:, col])
@@ -301,6 +312,8 @@ def bolt_conj_grad_solve(
         r = project(r)
         r2_new = xp.sum(r * r, axis=0)
         rels = xp.sqrt(r2_new / r2_orig)
+        if not bool(xp.all(xp.isfinite(rels))):
+            raise SolverConvergenceError(f"CG relative residual is non-finite at iteration {it}")
         if not bool(xp.any(rels > float(rel_tol))):
             if stats is not None:
                 rel_values = (
@@ -317,7 +330,7 @@ def bolt_conj_grad_solve(
         rel_values = xp.asnumpy(rels) if hasattr(xp, "asnumpy") else np.asarray(rels)
         for rel in rel_values:
             stats.add(int(max_iter), float(rel))
-    return [project(x[:, idx].copy()) for idx in range(x.shape[1])]
+    raise SolverConvergenceError(f"CG did not converge after {max_iter} iterations (rel_tol={rel_tol})")
 
 
 # ---------------------------------------------------------------------------
@@ -633,6 +646,12 @@ class BoltLmmOps:
     # Per-chromosome operations
     # ------------------------------------------------------------------
 
+    def output_device_context(self):
+        """Allocate solver-global vectors on the multi-X operator's output device."""
+        if not self._is_cupy:
+            return contextlib.nullcontext()
+        return self._xp.cuda.Device(self._x_all_op._output_device)
+
     def _device_ctx(self, chrom):
         if not self._is_cupy:
             return contextlib.nullcontext()
@@ -670,13 +689,8 @@ class BoltLmmOps:
         # of a (possibly non-contiguous) slice. The reduction + projection are pinned to
         # the operator's output device so the covariate basis and result share a device.
         W = np.asarray(weights, dtype=DTYPE)
-        if not self._is_cupy:
+        with self.output_device_context():
             return self._covariates.project_device(self._x_all_op.matmat(W))
-        import cupy as cp
-
-        with cp.cuda.Device(self._x_all_op._output_device):
-            result = self._x_all_op.matmat(W)  # (n, k), unprojected, on output device
-            return self._covariates.project_device(result)
 
     def column(self, chrom, local_idx: int) -> np.ndarray:
         """The projected column x_i of the standardized X for one model variant."""
@@ -693,33 +707,34 @@ class BoltLmmOps:
 
     def apply_k(self, v, *, exclude_chrom=None) -> np.ndarray:
         """(1/m_loco) * X_loco @ X_loco^T @ project(v), then project."""
-        if exclude_chrom is not None and exclude_chrom not in self._chrom_to_op_idx:
-            raise KeyError(
-                f"exclude_chrom={exclude_chrom!r} not in active chroms "
-                f"{sorted(self._chrom_to_op_idx.keys())}"
+        with self.output_device_context():
+            if exclude_chrom is not None and exclude_chrom not in self._chrom_to_op_idx:
+                raise KeyError(
+                    f"exclude_chrom={exclude_chrom!r} not in active chroms "
+                    f"{sorted(self._chrom_to_op_idx.keys())}"
+                )
+            v_dev = self._xp.asarray(v, dtype=DTYPE)
+            v_proj = self._covariates.project_device(v_dev)
+            exclude_idx = (
+                self._chrom_to_op_idx[exclude_chrom] if exclude_chrom is not None else None
             )
-        v_dev = self._xp.asarray(v, dtype=DTYPE)
-        v_proj = self._covariates.project_device(v_dev)
-        exclude_idx = (
-            self._chrom_to_op_idx[exclude_chrom] if exclude_chrom is not None else None
-        )
-        # Select the left-out chromosome (sticky state on the Multi-XXT operator),
-        # apply, then clear the exclusion so the operator's resting state is the
-        # full (no-exclude) sum.
-        self._k_all_op.set_exclude(exclude_idx)
-        try:
-            xxt_v = self._k_all_op.matvec(v_proj)
-        finally:
-            self._k_all_op.set_exclude(None)
+            # Select the left-out chromosome (sticky state on the Multi-XXT operator),
+            # apply, then clear the exclusion so the operator's resting state is the
+            # full (no-exclude) sum.
+            self._k_all_op.set_exclude(exclude_idx)
+            try:
+                xxt_v = self._k_all_op.matvec(v_proj)
+            finally:
+                self._k_all_op.set_exclude(None)
 
-        m = self._m_proj
-        if exclude_chrom is not None:
-            m -= self._m_proj_by_chrom[exclude_chrom]
-        if m <= 0:
-            return self._xp.zeros(self._n, dtype=DTYPE)
-        result = xxt_v / float(m)
-        self.project_inplace(result)
-        return result
+            m = self._m_proj
+            if exclude_chrom is not None:
+                m -= self._m_proj_by_chrom[exclude_chrom]
+            if m <= 0:
+                return self._xp.zeros(self._n, dtype=DTYPE)
+            result = xxt_v / float(m)
+            self.project_inplace(result)
+            return result
 
     # ------------------------------------------------------------------
     # Accessor for stats
@@ -794,48 +809,49 @@ def _generate_bolt_mc_components(
     seed: int,
     batched_apply_x: bool = False,
 ) -> Tuple[List[Any], List[Any], Any]:
-    xp = ops.xp
-    inv_sqrt_m = 1.0 / math.sqrt(float(ops.m_proj))
+    with ops.output_device_context():
+        xp = ops.xp
+        inv_sqrt_m = 1.0 / math.sqrt(float(ops.m_proj))
 
-    # Vectorized numpy draws. Order: all weights, then noise.
-    weights_by_chrom: Dict[Any, np.ndarray] = {}
-    gen = np.random.default_rng(int(seed) + 1)
-    for chrom in ops.chroms:
-        model_stats = ops.model_stats_for(chrom)
-        if not model_stats:
-            continue
-        m_c = len(model_stats)
-        weights_by_chrom[chrom] = gen.standard_normal((int(trials), m_c)) * inv_sqrt_m
-    noise = gen.standard_normal((int(trials), int(ops.n)))
+        # Vectorized numpy draws. Order: all weights, then noise.
+        weights_by_chrom: Dict[Any, np.ndarray] = {}
+        gen = np.random.default_rng(int(seed) + 1)
+        for chrom in ops.chroms:
+            model_stats = ops.model_stats_for(chrom)
+            if not model_stats:
+                continue
+            m_c = len(model_stats)
+            weights_by_chrom[chrom] = gen.standard_normal((int(trials), m_c)) * inv_sqrt_m
+        noise = gen.standard_normal((int(trials), int(ops.n)))
 
-    e_rand: List[Any] = []
+        e_rand: List[Any] = []
 
-    # g_rand[t] = project(sum_c X_c @ w_{c,t}). Stack the per-chrom (trials, m_c) weight
-    # blocks into a single (m_proj, trials) matrix in operator (active-chrom) order. Both
-    # paths go through the Multi-X operator (ops.apply_x_all); they differ only in matmat
-    # batch width: all trials at once vs. one probe column per call.
-    ordered_w = [
-        weights_by_chrom[chrom].T for chrom in ops.chroms if chrom in weights_by_chrom
-    ]
-    W = np.concatenate(ordered_w, axis=0)  # (m_proj, trials)
+        # g_rand[t] = project(sum_c X_c @ w_{c,t}). Stack the per-chrom (trials, m_c) weight
+        # blocks into a single (m_proj, trials) matrix in operator (active-chrom) order. Both
+        # paths go through the Multi-X operator (ops.apply_x_all); they differ only in matmat
+        # batch width: all trials at once vs. one probe column per call.
+        ordered_w = [
+            weights_by_chrom[chrom].T for chrom in ops.chroms if chrom in weights_by_chrom
+        ]
+        W = np.concatenate(ordered_w, axis=0)  # (m_proj, trials)
 
-    with _nvtx("bolt:mc_gen:apply_x"):
-        if batched_apply_x:
-            G = ops.apply_x_all(W)  # (n, trials), projected
-            g_rand: List[Any] = [G[:, t].copy() for t in range(int(trials))]
-        else:
-            g_rand = []
-            for t in range(int(trials)):
-                g = ops.apply_x_all(W[:, t : t + 1])  # (n, 1), projected
-                g_rand.append(g[:, 0].copy())
+        with _nvtx("bolt:mc_gen:apply_x"):
+            if batched_apply_x:
+                G = ops.apply_x_all(W)  # (n, trials), projected
+                g_rand: List[Any] = [G[:, t].copy() for t in range(int(trials))]
+            else:
+                g_rand = []
+                for t in range(int(trials)):
+                    g = ops.apply_x_all(W[:, t : t + 1])  # (n, 1), projected
+                    g_rand.append(g[:, 0].copy())
 
-    for trial in range(int(trials)):
-        e = xp.asarray(noise[trial], dtype=DTYPE)
-        ops.project_inplace(e)
-        e_rand.append(e)
+        for trial in range(int(trials)):
+            e = xp.asarray(noise[trial], dtype=DTYPE)
+            ops.project_inplace(e)
+            e_rand.append(e)
 
-    y_dev = ops.project(xp.asarray(np.asarray(y, dtype=DTYPE).copy()))
-    return g_rand, e_rand, y_dev
+        y_dev = ops.project(xp.asarray(np.asarray(y, dtype=DTYPE).copy()))
+        return g_rand, e_rand, y_dev
 
 
 # ---------------------------------------------------------------------------
@@ -854,84 +870,85 @@ def _compute_mc_scaling(
     max_iter: int,
     stats: CgStats,
 ) -> McScalingResult:
-    trials = len(g_rand)
-    delta = math.exp(float(log_delta))
-    sqrt_delta = math.sqrt(delta)
+    with ops.output_device_context():
+        trials = len(g_rand)
+        delta = math.exp(float(log_delta))
+        sqrt_delta = math.sqrt(delta)
 
-    def h_into(src, dst) -> None:
-        result = ops.apply_k(src, exclude_chrom=None)
-        dst[...] = result + delta * src
+        def h_into(src, dst) -> None:
+            result = ops.apply_k(src, exclude_chrom=None)
+            dst[...] = result + delta * src
 
-    rand_beta: List[float] = []
-    rand_eps: List[float] = []
+        rand_beta: List[float] = []
+        rand_eps: List[float] = []
 
-    with _nvtx("bolt:mc:rhs_build"):
-        rhs_columns = []
-        for g_t, e_t in zip(g_rand, e_rand):
-            rhs = e_t * sqrt_delta + g_t
-            ops.project_inplace(rhs)
-            rhs_columns.append(rhs)
-        rhs_columns.append(y_dev)
+        with _nvtx("bolt:mc:rhs_build"):
+            rhs_columns = []
+            for g_t, e_t in zip(g_rand, e_rand):
+                rhs = e_t * sqrt_delta + g_t
+                ops.project_inplace(rhs)
+                rhs_columns.append(rhs)
+            rhs_columns.append(y_dev)
 
-    with _nvtx("bolt:mc:cg_solve"):
-        z_columns = bolt_conj_grad_solve(
-            [h_into for _ in rhs_columns],
-            rhs_columns,
-            rel_tol=rel_tol,
-            max_iter=max_iter,
-            stats=stats,
-            project=ops.project,
-        )
+        with _nvtx("bolt:mc:cg_solve"):
+            z_columns = bolt_conj_grad_solve(
+                [h_into for _ in rhs_columns],
+                rhs_columns,
+                rel_tol=rel_tol,
+                max_iter=max_iter,
+                stats=stats,
+                project=ops.project,
+            )
 
-    with _nvtx("bolt:mc:reductions"):
-        for z_t in z_columns[:-1]:
-            rand_beta.append(_sum_score_squares(ops, z_t))
-            rand_eps.append(_dot(z_t, z_t))
+        with _nvtx("bolt:mc:reductions"):
+            for z_t in z_columns[:-1]:
+                rand_beta.append(_sum_score_squares(ops, z_t))
+                rand_eps.append(_dot(z_t, z_t))
 
-        z_data = z_columns[-1]
-        data_beta = _sum_score_squares(ops, z_data)
-        data_eps = _dot(z_data, z_data)
+            z_data = z_columns[-1]
+            data_beta = _sum_score_squares(ops, z_data)
+            data_eps = _dot(z_data, z_data)
 
-    if min([data_beta, data_eps, *rand_beta, *rand_eps]) <= 0.0:
-        raise RuntimeError("invalid BOLT MC-scaling objective component")
+        if min([data_beta, data_eps, *rand_beta, *rand_eps]) <= 0.0:
+            raise RuntimeError("invalid BOLT MC-scaling objective component")
 
-    rand_beta_total = float(sum(rand_beta))
-    rand_eps_total = float(sum(rand_eps))
-    f_reml = math.log((data_beta / data_eps) / (rand_beta_total / rand_eps_total))
+        rand_beta_total = float(sum(rand_beta))
+        rand_eps_total = float(sum(rand_eps))
+        f_reml = math.log((data_beta / data_eps) / (rand_beta_total / rand_eps_total))
 
-    f_jacks: List[float] = []
-    for jack in range(trials + 1):
-        jack_rand_beta = 0.0
-        jack_rand_eps = 0.0
+        f_jacks: List[float] = []
+        for jack in range(trials + 1):
+            jack_rand_beta = 0.0
+            jack_rand_eps = 0.0
+            for trial in range(trials):
+                if trial != jack:
+                    jack_rand_beta += rand_beta[trial]
+                    jack_rand_eps += rand_eps[trial]
+            if jack_rand_beta <= 0.0 or jack_rand_eps <= 0.0:
+                f_jacks.append(float("nan"))
+            else:
+                f_jacks.append(
+                    math.log((data_beta / data_eps) / (jack_rand_beta / jack_rand_eps))
+                )
+        f_jacks[-1] = f_reml
+
+        f_rands_as_data: List[float] = []
         for trial in range(trials):
-            if trial != jack:
-                jack_rand_beta += rand_beta[trial]
-                jack_rand_eps += rand_eps[trial]
-        if jack_rand_beta <= 0.0 or jack_rand_eps <= 0.0:
-            f_jacks.append(float("nan"))
-        else:
-            f_jacks.append(
-                math.log((data_beta / data_eps) / (jack_rand_beta / jack_rand_eps))
+            f_rands_as_data.append(
+                math.log(
+                    (rand_beta[trial] / rand_eps[trial])
+                    / (rand_beta_total / rand_eps_total)
+                )
             )
-    f_jacks[-1] = f_reml
 
-    f_rands_as_data: List[float] = []
-    for trial in range(trials):
-        f_rands_as_data.append(
-            math.log(
-                (rand_beta[trial] / rand_eps[trial])
-                / (rand_beta_total / rand_eps_total)
-            )
+        sigma2_k = _dot(y_dev, z_data) / float(max(ops.dim, 1))
+        return McScalingResult(
+            log_delta=float(log_delta),
+            f_jacks=tuple(float(v) for v in f_jacks),
+            f_rands_as_data=tuple(float(v) for v in f_rands_as_data),
+            sigma2_k=float(sigma2_k),
+            all_hinv_y=z_data,
         )
-
-    sigma2_k = _dot(y_dev, z_data) / float(max(ops.dim, 1))
-    return McScalingResult(
-        log_delta=float(log_delta),
-        f_jacks=tuple(float(v) for v in f_jacks),
-        f_rands_as_data=tuple(float(v) for v in f_rands_as_data),
-        sigma2_k=float(sigma2_k),
-        all_hinv_y=z_data,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -980,6 +997,8 @@ def fit_bolt_variance_components(
                 max_iter=max_iter,
                 stats=stats,
             )
+        if not np.all(np.isfinite([res.log_delta, res.f_reml, res.sigma2_k])):
+            raise SolverConvergenceError("Secant variance estimate is non-finite")
         logger.info(
             "MCscaling: logDelta=%.4f h2=%.4f f=%.6g",
             res.log_delta,
@@ -999,6 +1018,7 @@ def fit_bolt_variance_components(
         # from a secant iterate, while keeping best.log_delta for the exit check.
         best_is_empty = True
         converged = False
+        secant_steps = 0
         for _step in range(5):
             if abs(cur.f_reml - prev.f_reml) < 1e-300:
                 break
@@ -1016,6 +1036,7 @@ def fit_bolt_variance_components(
                 break
             prev = cur
             cur = evaluate(next_log_delta)
+            secant_steps += 1
             # updateBestMCscalingF (Bolt.cpp:2010): adopt while empty or strictly better.
             if best_is_empty or abs(cur.f_reml) < abs(best.f_reml):
                 best = cur
@@ -1043,6 +1064,9 @@ def fit_bolt_variance_components(
         h2=float(h2),
         delta=float(delta),
         all_hinv_y=best.all_hinv_y,
+        secant_converged=converged,
+        secant_steps=secant_steps,
+        cg_stats=stats,
     )
 
 
@@ -1060,29 +1084,30 @@ def solve_loco_hinv_y(
     max_iter: int,
     stats: CgStats,
 ) -> Dict[Any, Any]:
-    xp = ops.xp
-    y_dev = ops.project(xp.asarray(np.asarray(y, dtype=DTYPE)))
-    chroms = ops.chroms
-    matvecs = []
-    rhs_columns = []
-    for chrom in chroms:
+    with ops.output_device_context():
+        xp = ops.xp
+        y_dev = ops.project(xp.asarray(np.asarray(y, dtype=DTYPE)))
+        chroms = ops.chroms
+        matvecs = []
+        rhs_columns = []
+        for chrom in chroms:
 
-        def h_into(src, dst, left_out=chrom) -> None:
-            result = ops.apply_k(src, exclude_chrom=left_out)
-            dst[...] = result + float(fit.delta) * src
+            def h_into(src, dst, left_out=chrom) -> None:
+                result = ops.apply_k(src, exclude_chrom=left_out)
+                dst[...] = result + float(fit.delta) * src
 
-        matvecs.append(h_into)
-        rhs_columns.append(y_dev)
-    with _nvtx("bolt:loco:cg_solve"):
-        solved = bolt_conj_grad_solve(
-            matvecs,
-            rhs_columns,
-            rel_tol=rel_tol,
-            max_iter=max_iter,
-            stats=stats,
-            project=ops.project,
-        )
-    return {chrom: value for chrom, value in zip(chroms, solved)}
+            matvecs.append(h_into)
+            rhs_columns.append(y_dev)
+        with _nvtx("bolt:loco:cg_solve"):
+            solved = bolt_conj_grad_solve(
+                matvecs,
+                rhs_columns,
+                rel_tol=rel_tol,
+                max_iter=max_iter,
+                stats=stats,
+                project=ops.project,
+            )
+        return {chrom: value for chrom, value in zip(chroms, solved)}
 
 
 # ---------------------------------------------------------------------------
@@ -1208,158 +1233,159 @@ def calibrate_lmm_inf(
     max_iter: int,
     stats: CgStats,
 ) -> CalibrationResult:
-    with _nvtx("bolt:calib:select_snps"):
-        selected, tried = select_bolt_calibration_snps(
-            ops, fit=fit, count=int(count), seed=int(seed)
+    with ops.output_device_context():
+        with _nvtx("bolt:calib:select_snps"):
+            selected, tried = select_bolt_calibration_snps(
+                ops, fit=fit, count=int(count), seed=int(seed)
+            )
+        logger.info(
+            "Selected %d calibration SNPs (tried %d, threw out %d)",
+            len(selected),
+            int(tried),
+            int(tried) - len(selected),
         )
-    logger.info(
-        "Selected %d calibration SNPs (tried %d, threw out %d)",
-        len(selected),
-        int(tried),
-        int(tried) - len(selected),
-    )
-    pro_stats: List[float] = []
-    retro_stats: List[float] = []
-    ratios: List[float] = []
-    n_minus_c = float(max(ops.dim, 1))
+        pro_stats: List[float] = []
+        retro_stats: List[float] = []
+        ratios: List[float] = []
+        n_minus_c = float(max(ops.dim, 1))
 
-    xp = ops.xp
-    y_dev = ops.project(xp.asarray(np.asarray(y, dtype=DTYPE).copy()))
-    chroms = ops.chroms
-    rhs_columns = []
-    matvecs = []
+        xp = ops.xp
+        y_dev = ops.project(xp.asarray(np.asarray(y, dtype=DTYPE).copy()))
+        chroms = ops.chroms
+        rhs_columns = []
+        matvecs = []
 
-    for chrom in chroms:
+        for chrom in chroms:
 
-        def h_into(src, dst, left_out=chrom) -> None:
-            result = ops.apply_k(src, exclude_chrom=left_out)
-            dst[...] = result + float(fit.delta) * src
-
-        matvecs.append(h_into)
-        rhs_columns.append(y_dev)
-
-    selected_columns = []
-    with _nvtx("bolt:calib:columns"):
-        for sel_chrom, sel_stat in selected:
-            x = ops.column(sel_chrom, sel_stat.local_idx)
-
-            def h_into(src, dst, left_out=sel_chrom) -> None:
+            def h_into(src, dst, left_out=chrom) -> None:
                 result = ops.apply_k(src, exclude_chrom=left_out)
                 dst[...] = result + float(fit.delta) * src
 
             matvecs.append(h_into)
-            rhs_columns.append(x)
-            selected_columns.append(x)
+            rhs_columns.append(y_dev)
 
-    with _nvtx("bolt:calib:cg_solve"):
-        solved_columns = bolt_conj_grad_solve(
-            matvecs,
-            rhs_columns,
-            rel_tol=rel_tol,
-            max_iter=max_iter,
-            stats=stats,
-            project=ops.project,
+        selected_columns = []
+        with _nvtx("bolt:calib:columns"):
+            for sel_chrom, sel_stat in selected:
+                x = ops.column(sel_chrom, sel_stat.local_idx)
+
+                def h_into(src, dst, left_out=sel_chrom) -> None:
+                    result = ops.apply_k(src, exclude_chrom=left_out)
+                    dst[...] = result + float(fit.delta) * src
+
+                matvecs.append(h_into)
+                rhs_columns.append(x)
+                selected_columns.append(x)
+
+        with _nvtx("bolt:calib:cg_solve"):
+            solved_columns = bolt_conj_grad_solve(
+                matvecs,
+                rhs_columns,
+                rel_tol=rel_tol,
+                max_iter=max_iter,
+                stats=stats,
+                project=ops.project,
+            )
+
+        residuals.clear()
+        for chrom, solved in zip(chroms, solved_columns[: len(chroms)]):
+            residuals[chrom] = solved
+
+        q_by_sel = {i: solved for i, solved in enumerate(solved_columns[len(chroms) :])}
+        x_by_sel = {i: x for i, x in enumerate(selected_columns)}
+
+        with _nvtx("bolt:calib:moments"):
+            h_norm2 = {chrom: _dot(value, value) for chrom, value in residuals.items()}
+            phi_h_phi = {chrom: _dot(y_dev, value) for chrom, value in residuals.items()}
+
+            for i, (sel_chrom, sel_stat) in enumerate(selected):
+                x = x_by_sel[i]
+                score_h = _dot(x, residuals[sel_chrom])
+                x_norm2 = _dot(x, x)
+                if h_norm2[sel_chrom] <= 0.0 or phi_h_phi[sel_chrom] <= 0.0:
+                    raise RuntimeError(f"invalid LOCO H^-1 y moments for chr{sel_chrom}")
+                if x_norm2 <= 0.0:
+                    raise RuntimeError(
+                        f"selected calibration SNP has nonpositive projected norm: {sel_stat.local_idx}"
+                    )
+                retro = n_minus_c * score_h * score_h / (h_norm2[sel_chrom] * x_norm2)
+                if retro <= 0.0:
+                    raise RuntimeError(
+                        f"selected calibration SNP has nonpositive retrospective stat: {sel_stat.local_idx}"
+                    )
+                q = q_by_sel[i]
+                denom_h = _dot(x, q)
+                if denom_h <= 0.0:
+                    raise RuntimeError(
+                        f"selected calibration SNP has nonpositive prospective denominator: {sel_stat.local_idx}"
+                    )
+                pro = n_minus_c * score_h * score_h / denom_h / phi_h_phi[sel_chrom]
+                pro_stats.append(float(pro))
+                retro_stats.append(float(retro))
+                ratios.append(float(pro / retro))
+
+        total_pro = float(sum(pro_stats))
+        total_retro = float(sum(retro_stats))
+        if total_pro <= 0.0 or total_retro <= 0.0:
+            raise RuntimeError(
+                "calibration failed: prospective or retrospective sum is nonpositive"
+            )
+        factor = total_pro / total_retro
+        calibration_raw = factor
+        calibration_jacks = [
+            (total_pro - pro) / (total_retro - retro)
+            for pro, retro in zip(pro_stats, retro_stats)
+        ]
+        jack_count = len(calibration_jacks)
+        jack_sum = float(sum(calibration_jacks))
+        jack_sum2 = float(sum(v * v for v in calibration_jacks))
+        calibration_std = math.sqrt(
+            max(
+                0.0,
+                (jack_sum2 - jack_sum * jack_sum / jack_count)
+                * (jack_count - 1)
+                / jack_count,
+            )
+        )
+        ratio_of_medians = float(
+            np.median(np.asarray(pro_stats, dtype=np.float64))
+            / np.median(np.asarray(retro_stats, dtype=np.float64))
+        )
+        median_of_ratios = float(np.median(np.asarray(ratios, dtype=np.float64)))
+        if calibration_std > 0.01:
+            factor = ratio_of_medians
+        if factor <= 0.0:
+            raise RuntimeError(f"calibration factor is nonpositive: {factor}")
+
+        vinv_scale_by_chrom = {}
+        for chrom, residual in residuals.items():
+            resid_norm2 = _dot(residual, residual)
+            if resid_norm2 <= 0.0:
+                raise RuntimeError(f"LOCO H^-1 y has nonpositive norm for chr{chrom}")
+            resid_factor = math.sqrt(n_minus_c / resid_norm2 * factor)
+            vinv_scale_by_chrom[chrom] = 1.0 / (resid_factor * float(fit.sigma_g2))
+
+        logger.info(
+            "AvgPro=%.3f AvgRetro=%.3f Calibration=%.3f (%.3f)  "
+            "RatioOfMedians=%.3f MedianOfRatios=%.3f (%d SNPs)",
+            float(np.mean(pro_stats)),
+            float(np.mean(retro_stats)),
+            calibration_raw,
+            calibration_std,
+            ratio_of_medians,
+            median_of_ratios,
+            len(pro_stats),
         )
 
-    residuals.clear()
-    for chrom, solved in zip(chroms, solved_columns[: len(chroms)]):
-        residuals[chrom] = solved
-
-    q_by_sel = {i: solved for i, solved in enumerate(solved_columns[len(chroms) :])}
-    x_by_sel = {i: x for i, x in enumerate(selected_columns)}
-
-    with _nvtx("bolt:calib:moments"):
-        h_norm2 = {chrom: _dot(value, value) for chrom, value in residuals.items()}
-        phi_h_phi = {chrom: _dot(y_dev, value) for chrom, value in residuals.items()}
-
-        for i, (sel_chrom, sel_stat) in enumerate(selected):
-            x = x_by_sel[i]
-            score_h = _dot(x, residuals[sel_chrom])
-            x_norm2 = _dot(x, x)
-            if h_norm2[sel_chrom] <= 0.0 or phi_h_phi[sel_chrom] <= 0.0:
-                raise RuntimeError(f"invalid LOCO H^-1 y moments for chr{sel_chrom}")
-            if x_norm2 <= 0.0:
-                raise RuntimeError(
-                    f"selected calibration SNP has nonpositive projected norm: {sel_stat.local_idx}"
-                )
-            retro = n_minus_c * score_h * score_h / (h_norm2[sel_chrom] * x_norm2)
-            if retro <= 0.0:
-                raise RuntimeError(
-                    f"selected calibration SNP has nonpositive retrospective stat: {sel_stat.local_idx}"
-                )
-            q = q_by_sel[i]
-            denom_h = _dot(x, q)
-            if denom_h <= 0.0:
-                raise RuntimeError(
-                    f"selected calibration SNP has nonpositive prospective denominator: {sel_stat.local_idx}"
-                )
-            pro = n_minus_c * score_h * score_h / denom_h / phi_h_phi[sel_chrom]
-            pro_stats.append(float(pro))
-            retro_stats.append(float(retro))
-            ratios.append(float(pro / retro))
-
-    total_pro = float(sum(pro_stats))
-    total_retro = float(sum(retro_stats))
-    if total_pro <= 0.0 or total_retro <= 0.0:
-        raise RuntimeError(
-            "calibration failed: prospective or retrospective sum is nonpositive"
+        return CalibrationResult(
+            factor=float(factor),
+            std=float(calibration_std),
+            ratio_of_medians=ratio_of_medians,
+            median_of_ratios=median_of_ratios,
+            selected_snps=tuple(str(stat.local_idx) for _, stat in selected),
+            tried_snps=int(tried),
+            vinv_scale_by_chrom=vinv_scale_by_chrom,
         )
-    factor = total_pro / total_retro
-    calibration_raw = factor
-    calibration_jacks = [
-        (total_pro - pro) / (total_retro - retro)
-        for pro, retro in zip(pro_stats, retro_stats)
-    ]
-    jack_count = len(calibration_jacks)
-    jack_sum = float(sum(calibration_jacks))
-    jack_sum2 = float(sum(v * v for v in calibration_jacks))
-    calibration_std = math.sqrt(
-        max(
-            0.0,
-            (jack_sum2 - jack_sum * jack_sum / jack_count)
-            * (jack_count - 1)
-            / jack_count,
-        )
-    )
-    ratio_of_medians = float(
-        np.median(np.asarray(pro_stats, dtype=np.float64))
-        / np.median(np.asarray(retro_stats, dtype=np.float64))
-    )
-    median_of_ratios = float(np.median(np.asarray(ratios, dtype=np.float64)))
-    if calibration_std > 0.01:
-        factor = ratio_of_medians
-    if factor <= 0.0:
-        raise RuntimeError(f"calibration factor is nonpositive: {factor}")
-
-    vinv_scale_by_chrom = {}
-    for chrom, residual in residuals.items():
-        resid_norm2 = _dot(residual, residual)
-        if resid_norm2 <= 0.0:
-            raise RuntimeError(f"LOCO H^-1 y has nonpositive norm for chr{chrom}")
-        resid_factor = math.sqrt(n_minus_c / resid_norm2 * factor)
-        vinv_scale_by_chrom[chrom] = 1.0 / (resid_factor * float(fit.sigma_g2))
-
-    logger.info(
-        "AvgPro=%.3f AvgRetro=%.3f Calibration=%.3f (%.3f)  "
-        "RatioOfMedians=%.3f MedianOfRatios=%.3f (%d SNPs)",
-        float(np.mean(pro_stats)),
-        float(np.mean(retro_stats)),
-        calibration_raw,
-        calibration_std,
-        ratio_of_medians,
-        median_of_ratios,
-        len(pro_stats),
-    )
-
-    return CalibrationResult(
-        factor=float(factor),
-        std=float(calibration_std),
-        ratio_of_medians=ratio_of_medians,
-        median_of_ratios=median_of_ratios,
-        selected_snps=tuple(str(stat.local_idx) for _, stat in selected),
-        tried_snps=int(tried),
-        vinv_scale_by_chrom=vinv_scale_by_chrom,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -1598,88 +1624,89 @@ def compute_lmm_inf_stats(
     Backend-correct: the operator dispatch inside ``ops.scores`` follows
     ``ops._is_cupy``.
     """
-    y_dev = ops.project(ops.xp.asarray(np.asarray(y, dtype=DTYPE).copy()))
-    y_norm2 = _dot(y_dev, y_dev)
-    if y_norm2 <= 0.0:
-        raise RuntimeError("phenotype has nonpositive projected norm")
+    with ops.output_device_context():
+        y_dev = ops.project(ops.xp.asarray(np.asarray(y, dtype=DTYPE).copy()))
+        y_norm2 = _dot(y_dev, y_dev)
+        if y_norm2 <= 0.0:
+            raise RuntimeError("phenotype has nonpositive projected norm")
 
-    results: List[BoltChromInfStats] = []
-    for (chrom, grg), all_stats in zip(chrom_grgs, chrom_all_stats):
-        with _nvtx("bolt:assoc:chrom"):
-            vinv_scale = float(calibration.vinv_scale_by_chrom[chrom])
-            if vinv_scale <= 0.0:
-                raise RuntimeError(
-                    f"nonpositive VinvScaleFactor for chr{chrom}: {vinv_scale}"
+        results: List[BoltChromInfStats] = []
+        for (chrom, grg), all_stats in zip(chrom_grgs, chrom_all_stats):
+            with _nvtx("bolt:assoc:chrom"):
+                vinv_scale = float(calibration.vinv_scale_by_chrom[chrom])
+                if vinv_scale <= 0.0:
+                    raise RuntimeError(
+                        f"nonpositive VinvScaleFactor for chr{chrom}: {vinv_scale}"
+                    )
+
+                # Compact scores via the existing per-chrom op. ops.scores internally
+                # projects; passing already-projected vectors is safe because the
+                # orthogonal projection is idempotent. Arrays are full-length and
+                # aligned 1:1 with all_stats order (== compact score position).
+                linreg_scores = ops.scores(chrom, y_dev)
+                lmm_scores = ops.scores(chrom, residuals[chrom])
+
+                xp_s = _array_module(linreg_scores)
+                if hasattr(xp_s, "asnumpy"):
+                    linreg_scores = xp_s.asnumpy(linreg_scores)
+                    lmm_scores = xp_s.asnumpy(lmm_scores)
+                else:
+                    linreg_scores = np.asarray(linreg_scores)
+                    lmm_scores = np.asarray(lmm_scores)
+
+                # A1FREQ must be over the kept (non-missing) individuals, matching BOLT.
+                if ops._sample_filter is not None:
+                    _samp = [s for i in ops._sample_filter for s in (2 * i, 2 * i + 1)]
+                else:
+                    _samp = None
+                freqs_full = allele_frequencies(grg, sample_filter=_samp)
+
+                # Per-variant arrays in all_stats order. These are read-only views into
+                # the BoltVariantStatsArray; downstream arithmetic allocates new arrays
+                # (never mutates these in place).
+                local_idx = all_stats.local_idx
+                ns = all_stats.norm_scale
+                pn2 = all_stats.proj_norm2
+                xn2 = all_stats.x_norm2
+
+                model_mask = all_stats.is_model_variant_mask
+
+                a1freq = freqs_full[local_idx].astype(np.float64)
+
+                with np.errstate(divide="ignore", invalid="ignore"):
+                    linreg_chi2 = (
+                        (linreg_scores * linreg_scores) / y_norm2 / xn2 * float(ops.dim)
+                    )
+
+                    vinv_score_raw = (lmm_scores / ns) / float(fit.sigma_g2)
+                    lmm_chi2 = ((vinv_score_raw / vinv_scale) ** 2) / pn2
+                    beta = vinv_score_raw / (pn2 * vinv_scale * vinv_scale)
+                    se = 1.0 / (np.sqrt(pn2) * vinv_scale)
+
+                linreg_p = _chi2_sf_df1(linreg_chi2, pvalue_method)
+                lmm_p = _chi2_sf_df1(lmm_chi2, pvalue_method)
+
+                # Placeholders for non-model variants (match scalar version).
+                bad = BOLT_BAD_SNP_STAT
+                linreg_chi2 = np.where(model_mask, linreg_chi2, bad)
+                lmm_chi2 = np.where(model_mask, lmm_chi2, bad)
+                linreg_p = np.where(model_mask, linreg_p, 1.0)
+                lmm_p = np.where(model_mask, lmm_p, 1.0)
+                beta = np.where(model_mask, beta, 0.0)
+                se = np.where(model_mask, se, np.nan)
+
+                results.append(
+                    BoltChromInfStats(
+                        chrom=chrom,
+                        local_idx=local_idx,
+                        a1freq=a1freq,
+                        chisq_linreg=np.ascontiguousarray(linreg_chi2, dtype=np.float64),
+                        p_linreg=np.ascontiguousarray(linreg_p, dtype=np.float64),
+                        beta=np.ascontiguousarray(beta, dtype=np.float64),
+                        se=np.ascontiguousarray(se, dtype=np.float64),
+                        chisq_lmm_inf=np.ascontiguousarray(lmm_chi2, dtype=np.float64),
+                        p_lmm_inf=np.ascontiguousarray(lmm_p, dtype=np.float64),
+                    )
                 )
 
-            # Compact scores via the existing per-chrom op. ops.scores internally
-            # projects; passing already-projected vectors is safe because the
-            # orthogonal projection is idempotent. Arrays are full-length and
-            # aligned 1:1 with all_stats order (== compact score position).
-            linreg_scores = ops.scores(chrom, y_dev)
-            lmm_scores = ops.scores(chrom, residuals[chrom])
-
-            xp_s = _array_module(linreg_scores)
-            if hasattr(xp_s, "asnumpy"):
-                linreg_scores = xp_s.asnumpy(linreg_scores)
-                lmm_scores = xp_s.asnumpy(lmm_scores)
-            else:
-                linreg_scores = np.asarray(linreg_scores)
-                lmm_scores = np.asarray(lmm_scores)
-
-            # A1FREQ must be over the kept (non-missing) individuals, matching BOLT.
-            if ops._sample_filter is not None:
-                _samp = [s for i in ops._sample_filter for s in (2 * i, 2 * i + 1)]
-            else:
-                _samp = None
-            freqs_full = allele_frequencies(grg, sample_filter=_samp)
-
-            # Per-variant arrays in all_stats order. These are read-only views into
-            # the BoltVariantStatsArray; downstream arithmetic allocates new arrays
-            # (never mutates these in place).
-            local_idx = all_stats.local_idx
-            ns = all_stats.norm_scale
-            pn2 = all_stats.proj_norm2
-            xn2 = all_stats.x_norm2
-
-            model_mask = all_stats.is_model_variant_mask
-
-            a1freq = freqs_full[local_idx].astype(np.float64)
-
-            with np.errstate(divide="ignore", invalid="ignore"):
-                linreg_chi2 = (
-                    (linreg_scores * linreg_scores) / y_norm2 / xn2 * float(ops.dim)
-                )
-
-                vinv_score_raw = (lmm_scores / ns) / float(fit.sigma_g2)
-                lmm_chi2 = ((vinv_score_raw / vinv_scale) ** 2) / pn2
-                beta = vinv_score_raw / (pn2 * vinv_scale * vinv_scale)
-                se = 1.0 / (np.sqrt(pn2) * vinv_scale)
-
-            linreg_p = _chi2_sf_df1(linreg_chi2, pvalue_method)
-            lmm_p = _chi2_sf_df1(lmm_chi2, pvalue_method)
-
-            # Placeholders for non-model variants (match scalar version).
-            bad = BOLT_BAD_SNP_STAT
-            linreg_chi2 = np.where(model_mask, linreg_chi2, bad)
-            lmm_chi2 = np.where(model_mask, lmm_chi2, bad)
-            linreg_p = np.where(model_mask, linreg_p, 1.0)
-            lmm_p = np.where(model_mask, lmm_p, 1.0)
-            beta = np.where(model_mask, beta, 0.0)
-            se = np.where(model_mask, se, np.nan)
-
-            results.append(
-                BoltChromInfStats(
-                    chrom=chrom,
-                    local_idx=local_idx,
-                    a1freq=a1freq,
-                    chisq_linreg=np.ascontiguousarray(linreg_chi2, dtype=np.float64),
-                    p_linreg=np.ascontiguousarray(linreg_p, dtype=np.float64),
-                    beta=np.ascontiguousarray(beta, dtype=np.float64),
-                    se=np.ascontiguousarray(se, dtype=np.float64),
-                    chisq_lmm_inf=np.ascontiguousarray(lmm_chi2, dtype=np.float64),
-                    p_lmm_inf=np.ascontiguousarray(lmm_p, dtype=np.float64),
-                )
-            )
-
-    return results
+        return results

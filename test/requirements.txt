@@ -3,3 +3,4 @@ pytest
 pandas
 scipy
 parameterized
+grg-pheno-sim==1.5

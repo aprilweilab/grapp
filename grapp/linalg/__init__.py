@@ -15,7 +15,7 @@ from scipy.sparse.linalg import eigsh
 from typing import Tuple, List, Dict, Any, Union, Optional
 
 from grapp.util import allele_frequencies as _allele_frequencies
-from grapp.grg_calculator import GRGCalcInterface as _GRGCalcInterface, _wrap_grg
+from grapp.grg_calculator import GRGCalcInterface as _GRGCalcInterface, _wrap_grg, cupy as _cupy
 
 # Everything below is imported so that users can import them via grapp.linalg
 from grapp.linalg.ops_scipy import (  # noqa: F401
@@ -245,9 +245,10 @@ def get_eig_pcs(
             **op_kwargs,
         )
 
-    PC_scores = (
-        pc_op._matmat(eigen_vectors.real) / numpy.sqrt(eigen_values.real)[None, :]
-    )
+    PC_scores = pc_op._matmat(eigen_vectors.real)
+    if _cupy is not None and isinstance(PC_scores, _cupy.ndarray):
+        PC_scores = _cupy.asnumpy(PC_scores)
+    PC_scores = PC_scores / numpy.sqrt(eigen_values.real)[None, :]
     return PC_scores, eigen_values, eigen_vectors
 
 
