@@ -243,6 +243,33 @@ Per AI-REML iteration, with `m` genetic components and `t` trace vectors:
 each solve being a CG run of a few dozen products against `V`. Nothing is
 `O(N^2)`.
 
+## Time trials and memory
+
+`examples/aireml_benchmark.py` runs many fits in one process, which makes it
+useless for measuring memory: the high-water mark is whatever the largest fit
+needed plus everything the earlier ones left behind. `examples/aireml_timing.py`
+does one solve per process so an external profiler sees that solve alone.
+
+```
+# write a dataset once per size, then time a single solve
+python examples/aireml_timing.py make --dataset data/n16000 --size 16000
+/usr/bin/time -l python examples/aireml_timing.py solve --dataset data/n16000
+
+# or drive a whole sweep, which makes any missing datasets itself
+python examples/aireml_timing.py trials --sizes 1000 4000 16000 64000
+```
+
+`trials` re-runs each solve in a fresh process under the profiler and parses
+the peak RSS back out, so the `RSS_MiB` column is a true per-solve high-water
+mark rather than a running total. It handles both profiler dialects: GNU time
+reports kilobytes under `-v`, BSD/macOS time reports *bytes* under `-l`, which
+is an easy way to be wrong by 1024x. On macOS `/usr/bin/time` has no `-v` at
+all -- use `-l`, or `brew install gnu-time` for `gtime -v`.
+
+Pass `--grg` to add a `grapp pca` row as a memory baseline on the same data.
+That path needs grapp's own dependencies (`pygrgl`, `pandas`); the sweep still
+runs without them and says so.
+
 ## Accuracy
 
 `test/aireml/` checks, among other things, that
