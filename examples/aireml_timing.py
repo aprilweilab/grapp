@@ -48,6 +48,11 @@ import scipy.sparse
 
 from aireml import fit_reml, grm_from_genotypes
 
+#: Bumped whenever make_dataset changes what it writes, so that a cached
+#: dataset from an older version is regenerated instead of being compared
+#: against freshly generated ones.
+GENERATOR_VERSION = 2
+
 
 def peak_rss_mb() -> float:
     """
@@ -65,28 +70,41 @@ def make_dataset(args):
     rng = numpy.random.default_rng(args.seed)
     started = time.perf_counter()
 
-    genotypes = scipy.sparse.random(
-        args.size,
-        args.variants,
-        density=args.density,
-        format="csr",
-        random_state=numpy.random.RandomState(args.seed),
-        data_rvs=lambda n: rng.integers(1, 3, size=n).astype(numpy.float64),
-    )
+    # Background variation.  Positions are sampled with replacement, which is
+    # O(nnz); scipy.sparse.random instead samples without replacement from the
+    # whole size-by-variants grid, which takes minutes rather than a fraction
+    # of a second once N reaches 64000.  About 0.5% of positions collide and
+    # simply sum, which is harmless for synthetic genotypes.
+    target_nnz = int(round(args.size * args.variants * args.density))
+    genotypes = scipy.sparse.coo_matrix(
+        (
+            rng.integers(1, 3, size=target_nnz).astype(numpy.float64),
+            (
+                rng.integers(0, args.size, size=target_nnz),
+                rng.integers(0, args.variants, size=target_nnz),
+            ),
+        ),
+        shape=(args.size, args.variants),
+    ).tocsr()
+
     # Group structure, so the GRM has a few large eigenvalues like a real
     # sample with relatedness rather than a near-diagonal one.
     membership = rng.integers(0, args.groups, size=args.size)
     block = max(1, args.variants // (4 * args.groups))
-    rows, cols = [], []
+    row_parts, col_parts = [], []
     for group in range(args.groups):
         members = numpy.flatnonzero(membership == group)
+        if members.size == 0:
+            continue
         start = (group * block) % max(1, args.variants - block)
-        for column in range(start, start + block):
-            rows.extend(members.tolist())
-            cols.extend([column] * members.size)
-    shared = scipy.sparse.csr_matrix(
-        (numpy.ones(len(rows)), (rows, cols)), shape=(args.size, args.variants)
-    )
+        columns = numpy.arange(start, start + block)
+        row_parts.append(numpy.tile(members, block))
+        col_parts.append(numpy.repeat(columns, members.size))
+    rows = numpy.concatenate(row_parts)
+    cols = numpy.concatenate(col_parts)
+    shared = scipy.sparse.coo_matrix(
+        (numpy.ones(rows.size), (rows, cols)), shape=(args.size, args.variants)
+    ).tocsr()
     genotypes = (genotypes + shared).tocsr()
 
     # Normalize so the GRM has mean diagonal 1 and tau2 is a genetic variance.
@@ -105,6 +123,7 @@ def make_dataset(args):
     with open(args.dataset + ".meta.json", "w") as handle:
         json.dump(
             {
+                "generator": GENERATOR_VERSION,
                 "size": args.size,
                 "variants": args.variants,
                 "nnz": int(genotypes.nnz),
@@ -355,7 +374,19 @@ def trials(args):
     print(header)
     for size in args.sizes:
         prefix = os.path.join(args.data_dir, f"n{size}")
-        if not os.path.exists(prefix + ".genotypes.npz"):
+        stale = True
+        if os.path.exists(prefix + ".genotypes.npz") and os.path.exists(
+            prefix + ".meta.json"
+        ):
+            with open(prefix + ".meta.json") as handle:
+                cached = json.load(handle)
+            stale = (
+                cached.get("generator") != GENERATOR_VERSION
+                or cached.get("variants") != args.variants
+                or cached.get("density") != args.density
+                or cached.get("groups") != args.groups
+            )
+        if stale:
             subprocess.check_call(
                 [
                     sys.executable,
